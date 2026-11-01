@@ -22,10 +22,12 @@ interface Batch {
 }
 interface Candidate { data: Float32Array; index: number; x: number; z: number; d: number }
 
-const FLEXIBILITY = [0.12, 0.16, 0.1, 0.26, 0] as const;
+const FLEXIBILITY = [0.12, 0.16, 0.1, 0.26, 0, 0.1, 0.18, 0.32, 0.35, 0] as const;
+const GROUND_COVER = new Set([2, 3, 7, 8]);
+const LEAF_TEXTURES: Record<number, 'pine' | 'aspen' | 'shrub'> = { 0: 'pine', 1: 'aspen', 2: 'shrub', 5: 'pine', 6: 'aspen' };
 
 /**
- * Five reusable global instance batches. Workers own canonical placement; this
+ * Ten reusable global instance batches (trees, ground cover, stone and cliffs). Workers own canonical placement; this
  * class packs the nearest accepted records into bounded GPU buffers. Range fade
  * and wind run in the vertex shader. Wind phase is derived from canonical world
  * coordinates modulo the origin wrap, so rebasing never restarts a plant's sway.
@@ -45,12 +47,12 @@ export class VegetationManager {
   private dirty = true;
   private enabled = true;
   private disposed = false;
-  private counts = [0, 0, 0, 0, 0];
+  private counts = Array<number>(PLANT_KINDS.length).fill(0);
   private truncated = false;
   windEnabled = true;
 
   constructor(private readonly terrain: TerrainManager, private readonly origin: FloatingOrigin, public quality: QualityName) {
-    this.group.name = 'Streamed vegetation / five instance batches';
+    this.group.name = 'Streamed vegetation / ten instance batches';
     this.allocate();
   }
 
@@ -58,19 +60,19 @@ export class VegetationManager {
     const preset = QUALITY[this.quality];
     PLANT_KINDS.forEach((kind, index) => {
       const capacity = preset.instanceBudgets[index]!;
-      const geometry = createPlantGeometry(kind, this.quality === 'low' ? 'low' : 'full');
+      const geometry = createPlantGeometry(kind, preset.geometryDetail);
       const roots = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3).setUsage(DynamicDrawUsage);
       const meta = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3).setUsage(DynamicDrawUsage);
       geometry.setAttribute('plantRoot', roots);
       geometry.setAttribute('plantMeta', meta);
-      const radius = uniform(kind === 'grass' ? preset.grassDistance : kind === 'shrub' ? preset.vegetationDistance * 0.65 : preset.vegetationDistance);
+      const radius = uniform(kind === 'grass' || kind === 'fern' || kind === 'flowers' ? preset.grassDistance : kind === 'shrub' ? preset.vegetationDistance * 0.65 : preset.vegetationDistance);
       const root = attribute('plantRoot', 'vec3');
       const info = attribute('plantMeta', 'vec3');
       const leaf = attribute('leaf', 'float');
       const flex = attribute('plantFlex', 'float');
       const flower = attribute('flower', 'float');
       const flowerScale = mix(float(1), info.z, flower);
-      const edgeStart = kind === 'grass' || kind === 'shrub' ? 0.78 : 0.94;
+      const edgeStart = GROUND_COVER.has(index) ? 0.78 : 0.94;
       const fade = float(1).sub(smoothstep(radius.mul(edgeStart), radius, distance(cameraPosition.xz, root.xz)));
       const phase = this.time.mul(1.25).add(info.x);
       const gust = phase.sin().add(phase.mul(2.17).add(info.x.mul(0.6)).sin().mul(0.38));
@@ -79,12 +81,13 @@ export class VegetationManager {
         roughness: kind === 'rock' ? 0.88 : 0.9,
         metalness: 0,
         vertexColors: true,
-        side: kind === 'grass' || kind === 'shrub' || kind === 'pine' || kind === 'aspen' ? DoubleSide : FrontSide,
+        side: kind === 'rock' || kind === 'cliff' ? FrontSide : DoubleSide,
       });
       material.name = `Instanced ${kind} / layered foliage + wind`;
       let foliage: DataTexture | undefined;
-      if (kind === 'pine' || kind === 'aspen' || kind === 'shrub') {
-        foliage = createFoliageTexture(kind);
+      const textureKind = LEAF_TEXTURES[index];
+      if (textureKind) {
+        foliage = createFoliageTexture(textureKind);
         const spray = texture(foliage);
         material.colorNode = mix(vec3(1), spray.rgb, leaf);
         material.opacityNode = mix(float(1), spray.a, leaf);
@@ -98,7 +101,7 @@ export class VegetationManager {
       mesh.instanceMatrix.setUsage(DynamicDrawUsage);
       mesh.setColorAt(0, new Color(1, 1, 1));
       mesh.instanceColor!.setUsage(DynamicDrawUsage);
-      mesh.castShadow = kind === 'pine' || kind === 'aspen' || kind === 'rock';
+      mesh.castShadow = kind === 'pine' || kind === 'aspen' || kind === 'rock' || kind === 'spruce' || kind === 'birch' || kind === 'cliff' || (this.quality === 'ultra' && kind === 'shrub');
       mesh.receiveShadow = true;
       mesh.boundingSphere = new Sphere(new Vector3(), preset.vegetationDistance + CONFIG.origin.rebaseDistance * 2 + 2500);
       this.group.add(mesh);
@@ -125,7 +128,7 @@ export class VegetationManager {
 
   private rebuild(position: Vector3): void {
     const preset = QUALITY[this.quality];
-    const candidates: Candidate[][] = [[], [], [], [], []];
+    const candidates: Candidate[][] = Array.from({ length: PLANT_KINDS.length }, () => []);
     const maxRange = preset.vegetationDistance;
     for (const tile of this.terrain.activeTiles) {
       if (tile.vegetation.length === 0 || distanceToTile(tile.coord, position.x, position.z) > maxRange) continue;
@@ -136,7 +139,7 @@ export class VegetationManager {
         const p = readPlant(data, i, this.plant);
         if (p.random > preset.vegetationDensity) continue;
         const x = worldX + p.x, z = worldZ + p.z;
-        const radius = p.kind === 3 ? preset.grassDistance : p.kind === 2 ? preset.vegetationDistance * 0.65 : preset.vegetationDistance;
+        const radius = p.kind === 3 || p.kind === 7 || p.kind === 8 ? preset.grassDistance : p.kind === 2 ? preset.vegetationDistance * 0.65 : preset.vegetationDistance;
         const d = Math.hypot(x - position.x, z - position.z);
         if (d > radius) continue;
         candidates[p.kind]!.push({ data, index: i, x, z, d });
@@ -169,13 +172,16 @@ export class VegetationManager {
         if (p.kind === 0) this.color.setRGB(0.86 + v * 0.2, 0.9 + v * 0.24, 0.82 + v * 0.16);
         else if (p.kind === 1) this.color.setRGB(0.95 + v * 0.25, 0.92 + v * 0.18, 0.72 + v * 0.2);
         else if (p.kind === 3) this.color.setRGB(0.85 + v * 0.35, 0.9 + v * 0.25, 0.7 + v * 0.22);
+        else if (p.kind === 5) this.color.setRGB(0.78 + v * 0.18, 0.88 + v * 0.2, 0.9 + v * 0.2);
+        else if (p.kind === 6) this.color.setRGB(0.95 + v * 0.2, 0.94 + v * 0.18, 0.78 + v * 0.2);
+        else if (p.kind === 8) this.color.setRGB(0.9 + v * 0.25, 0.85 + v * 0.2, 0.85 + v * 0.25);
         else this.color.setRGB(0.9 + v * 0.18, 0.92 + v * 0.16, 0.86 + v * 0.14);
         this.color.multiplyScalar(p.brightness);
         batch.mesh.setColorAt(n, this.color);
         batch.roots.setXYZ(n, localX, localY, localZ);
         // Origin-invariant phase: origin shifts are multiples of 2048 m.
         const phase = mod(candidate.x, 1024) * 0.017 + mod(candidate.z, 1024) * 0.013 + p.yaw * 3;
-        const bloom = p.kind === 3 && p.random < 0.16 ? 1 : 0;
+        const bloom = p.kind === 8 ? 1 : p.kind === 3 && p.random < 0.16 ? 1 : 0;
         batch.meta.setXYZ(n, phase, FLEXIBILITY[p.kind]! * p.scale, bloom);
         this.counts[kind] = n + 1;
       }

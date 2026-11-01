@@ -1,7 +1,7 @@
 import { DataTexture, RGBAFormat, UnsignedByteType, RepeatWrapping, LinearMipmapLinearFilter, LinearFilter, NoColorSpace } from 'three/webgpu';
 import { clamp, lerp } from '../utils/math';
 
-export type SurfaceKind = 'grass' | 'rock' | 'snow';
+export type SurfaceKind = 'grass' | 'rock' | 'snow' | 'asphalt' | 'gravel';
 const SIZE = 256;
 
 function hash(x: number, y: number, seed: number): number {
@@ -38,7 +38,7 @@ function fbm(u: number, v: number, seed: number, octaves: number, base = 8): num
  */
 export function createSurfaceTexture(kind: SurfaceKind): DataTexture {
   const data = new Uint8Array(SIZE * SIZE * 4);
-  const seed = kind === 'grass' ? 7241 : kind === 'rock' ? 9127 : 3187;
+  const seed = kind === 'grass' ? 7241 : kind === 'rock' ? 9127 : kind === 'asphalt' ? 5107 : kind === 'gravel' ? 6113 : 3187;
   for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
     const u = x / SIZE, v = y / SIZE;
     const broad = fbm(u, v, seed, 3, 4);
@@ -68,6 +68,18 @@ export function createSurfaceTexture(kind: SurfaceKind): DataTexture {
       r = shade * lerp(0.94, 1.04, warm);
       g = shade * lerp(0.95, 0.99, warm);
       b = shade * lerp(0.96, 0.92, warm);
+    } else if (kind === 'asphalt') {
+      // Dense aggregate with hairline cracks; alpha is a shallow bump height.
+      const aggregate = fbm(u, v, seed + 11, 2, 32);
+      const crack = Math.abs(noise((u + broad * 0.05) * 5, (v + fine * 0.04) * 5, 5, seed + 7) - 0.5);
+      height = clamp(aggregate * 0.55 + grain * 0.25 + smooth01(crack * 5) * 0.2, 0, 1);
+      const shade = 0.78 + height * 0.34;
+      r = shade * 0.94; g = shade * 0.97; b = shade;
+    } else if (kind === 'gravel') {
+      const stones = fbm(u, v, seed + 5, 3, 24);
+      height = clamp(stones * 0.7 + grain * 0.3, 0, 1);
+      const shade = 0.66 + height * 0.5;
+      r = shade * 1.02; g = shade * 0.98; b = shade * 0.9;
     } else {
       // Wind-packed snow: soft sastrugi, sparse sparkle, very low relief.
       const drift = noise(u * 6, v * 18, 6, seed + 6, 18);

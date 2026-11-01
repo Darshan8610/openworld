@@ -22,7 +22,9 @@ test('boots a deterministic streamed world without page errors', async ({ page }
   expect(state.cached).toBeGreaterThan(50);
   expect(state.pending).toBe(0);
   expect(state.vegetation.instances).toBeGreaterThan(100);
-  expect(state.vegetation.batches).toBeLessThanOrEqual(5);
+  expect(state.vegetation.batches).toBeLessThanOrEqual(10);
+  expect(state.roads.roadTiles).toBeGreaterThan(0);
+  expect(state.roads.roadsEnabled).toBe(true);
   expect(state.vegetation.instances).toBeLessThanOrEqual(state.vegetation.capacity);
   await expect(page.locator('#loading')).toHaveClass(/loaded/);
   await expect(page.locator('#fatal')).toBeHidden();
@@ -67,13 +69,14 @@ test('graphics preset rebuilds terrain and remains interactive', async ({ page }
 
 
 test('vegetation can be disabled and restored without rebuilding the world', async ({ page }) => {
+  test.setTimeout(180_000);
   await openWorld(page);
-  // Stop the scenic flight so normal streaming cannot change the tile counter mid-assertion.
+  // Stop route/scenic motion so streaming cannot change the tile counter mid-assertion.
   await page.locator('#tour').click();
   await page.waitForFunction(() => {
     const state = window.__WAYFARER__?.snapshot();
-    return state?.pending === 0 && state?.touring === false && (state?.speed ?? 1) < 0.5;
-  }, null, { timeout: 30_000 });
+    return state?.pending === 0 && state?.touring === false && state?.routeFollowing === false && (state?.speed ?? 1) < 0.5;
+  }, null, { timeout: 90_000 });
   const generated = (await snapshot(page)).generated;
   await page.getByRole('button', { name: 'World settings' }).click();
   await page.locator('#vegetation').uncheck();
@@ -127,5 +130,38 @@ test('wind and surface detail switches update live rendering state', async ({ pa
     const state = window.__WAYFARER__?.snapshot();
     return state?.windEnabled === true && state?.detailEnabled === true;
   });
+  await expect(page.locator('#fatal')).toBeHidden();
+});
+
+
+test('scenic route survey follows the road network and can be toggled', async ({ page }) => {
+  await openWorld(page);
+  expect((await snapshot(page)).routeFollowing).toBe(true);
+  await page.getByRole('button', { name: 'World settings' }).click();
+  await page.locator('#route-select').selectOption('golden');
+  await page.waitForFunction(() => window.__WAYFARER__?.snapshot().ready === true && window.__WAYFARER__?.snapshot().route?.name === 'Golden Ridge', null, { timeout: 90_000 });
+  const state = await snapshot(page);
+  expect(state.routeFollowing).toBe(true);
+  expect(state.route?.corridor).toBe(1);
+  expect(page.url()).toContain('route=golden');
+  await page.locator('#roads').uncheck();
+  await page.waitForFunction(() => window.__WAYFARER__?.snapshot().roads.roadsEnabled === false);
+  expect(page.url()).toContain('roads=0');
+  await page.locator('#roads').check();
+  await page.waitForFunction(() => (window.__WAYFARER__?.snapshot().roads.roadTiles ?? 0) > 0);
+});
+
+test('Ultra preset boots with ambient occlusion and streamed roads', async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  // Exercise the Ultra post chain / road mesh without software-rendering 60k plants.
+  await page.goto('/?renderer=webgl&quality=ultra&seed=ultra-smoke&vegetation=0&postfx=1');
+  await page.waitForFunction(() => window.__WAYFARER__?.snapshot().ready === true, null, { timeout: 180_000 });
+  const state = await snapshot(page);
+  expect(state.quality).toBe('ultra');
+  expect(state.postfxEnabled).toBe(true);
+  expect(state.roads.roadTiles).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
   await expect(page.locator('#fatal')).toBeHidden();
 });

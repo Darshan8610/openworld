@@ -1,4 +1,5 @@
 import { CONFIG } from '../config';
+import type { RoadTileData } from './road-geometry';
 
 export interface TileCoord {
   x: number;
@@ -30,6 +31,8 @@ export interface TileResult {
   biomeWeights: Float32Array;
   /** Packed canonical vegetation records in tile-local XZ coordinates. */
   vegetation: Float32Array;
+  /** Draped carriageway, markings, shoulders and canonical roadside props. */
+  road: RoadTileData;
   indices: Uint32Array;
   minHeight: number;
   maxHeight: number;

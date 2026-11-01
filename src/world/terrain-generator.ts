@@ -5,6 +5,7 @@ import { CONFIG } from '../config';
 import { createClimateSample } from './biomes';
 import { clamp } from '../utils/math';
 import { generateVegetation } from './vegetation-field';
+import { generateRoadTile } from './road-geometry';
 
 /**
  * Pure chunk builder. Runs inside a worker in production and directly in unit
@@ -106,7 +107,7 @@ export function generateTile(request: TileRequest, terrain: TerrainField): TileR
   return {
     type: 'tile', id: request.id, epoch: request.epoch, key: tileKey(request),
     coord: { x: request.x, z: request.z, level: request.level, rootX: request.rootX, rootZ: request.rootZ },
-    segments: n, positions, normals, colors, surface, biomeWeights, vegetation: generateVegetation(request, terrain.seed, terrain, surfaceHeight), indices,
+    segments: n, positions, normals, colors, surface, biomeWeights, vegetation: generateVegetation(request, terrain.seed, terrain, surfaceHeight), road: generateRoadTile(request, terrain.roads, surfaceHeight), indices,
     minHeight: minHeight - skirt, maxHeight,
   };
 }

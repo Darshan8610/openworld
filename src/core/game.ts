@@ -10,9 +10,11 @@ import { Input } from './input';
 import { SurveyCamera } from './survey-camera';
 import { TerrainManager } from '../world/terrain-manager';
 import { VegetationManager } from '../world/vegetation-manager';
+import { RoadManager } from '../world/road-manager';
+import { SCENIC_ROUTES, RoadNetwork } from '../world/road-network';
 import { BIOMES } from '../world/biomes';
 import type { BiomeId } from '../world/biomes';
-import { findBiomeViewpoint } from '../world/viewpoints';
+import { findBiomeViewpoint, findRouteStation } from '../world/viewpoints';
 import { SkySystem } from '../world/sky';
 import { Interface } from '../ui/interface';
 import { normalizeSeed, randomSeed } from '../utils/random';
@@ -27,6 +29,7 @@ export class Game {
   private readonly input: Input;
   private readonly terrain: TerrainManager;
   private readonly vegetation: VegetationManager;
+  private readonly roads: RoadManager;
   private readonly rig: SurveyCamera;
   private readonly sky: SkySystem;
   private readonly post: PostProcessing;
@@ -44,14 +47,16 @@ export class Game {
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     this.context = context; this.seed = seed; this.quality = quality;
-    this.scene.name = 'Wayfarer / Phase 2';
+    this.scene.name = 'Wayfarer / Phase 3';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
     this.terrain = new TerrainManager(this.origin, seed, quality, (error) => this.fail(error));
     this.vegetation = new VegetationManager(this.terrain, this.origin, quality);
+    this.roads = new RoadManager(this.terrain, this.origin, quality, seed);
+    if (new URLSearchParams(location.search).get('roads') === '0') this.roads.setEnabled(false);
     if (new URLSearchParams(location.search).get('vegetation') === '0') this.vegetation.setEnabled(false);
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) this.vegetation.setWind(false);
-    this.rig = new SurveyCamera(this.input, this.origin, this.terrain);
+    this.rig = new SurveyCamera(this.input, this.origin, this.terrain, this.roads);
     this.rig.position.copy(position); this.rig.previous.copy(position); this.rig.home.copy(position);
     this.origin.update(position);
     this.sky = new SkySystem(context.renderer, this.scene, seed, quality);
@@ -60,8 +65,8 @@ export class Game {
     const postParam = new URLSearchParams(location.search).get('postfx');
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
-    this.scene.add(this.terrain.group, this.vegetation.group);
-    this.unsubscribeOrigin = this.origin.onChange((delta) => { this.terrain.rebase(delta); this.vegetation.rebase(); });
+    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group);
+    this.unsubscribeOrigin = this.origin.onChange((delta) => { this.terrain.rebase(delta); this.vegetation.rebase(); this.roads.rebase(delta); });
     this.ui = new Interface(seed, hour, quality, context.backend, {
       seed: (value) => this.changeSeed(normalizeSeed(value)),
       randomSeed: () => this.changeSeed(randomSeed()),
@@ -69,13 +74,15 @@ export class Game {
       hour: (value) => { this.sky.setHour(value); this.sky.cycling = false; this.ui.syncTime(value, false); },
       cycle: (value) => { this.sky.cycling = value; },
       quality: (value) => this.setQuality(value),
-      tour: () => { this.rig.touring = !this.rig.touring; this.ui.dismissIntro(); },
+      tour: () => { this.toggleTour(); this.ui.dismissIntro(); },
       reset: () => { this.rig.reset(); this.ui.dismissIntro(); },
       lock: () => { void this.input.lock(); },
       debug: (value) => { this.terrain.setDebug(value); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); },
       wireframe: (value) => this.terrain.setWireframe(value),
       biomeDebug: (value) => { this.terrain.setBiomeDebug(value); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); },
       vegetation: (value) => { this.vegetation.setEnabled(value); this.updateURL(); },
+      roads: (value) => { this.roads.setEnabled(value); this.updateURL(); },
+      route: (value) => this.travelRoute(value),
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
       postfx: (value) => { this.post.setEnabled(value); this.updateURL(); },
@@ -83,15 +90,16 @@ export class Game {
       stats: (value) => this.ui.showStats(value),
     });
     this.ui.syncTime(hour, this.sky.cycling);
-    this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled);
+    this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
     this.ui.syncPost(this.post.isEnabled);
     this.input.onShortcut = (code) => {
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
       if (code === 'KeyH') this.ui.toggleHUD();
       if (code === 'KeyL') { this.terrain.setDebug(!this.terrain.debug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
       if (code === 'KeyB') { this.terrain.setBiomeDebug(!this.terrain.biomeDebug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
-      if (code === 'KeyV') { this.vegetation.setEnabled(!this.vegetation.vegetationEnabled); this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled); this.updateURL(); }
-      if (code === 'KeyT') { this.rig.touring = !this.rig.touring; this.ui.dismissIntro(); }
+      if (code === 'KeyV') { this.vegetation.setEnabled(!this.vegetation.vegetationEnabled); this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled); this.updateURL(); }
+      if (code === 'KeyT') { this.toggleTour(); this.ui.dismissIntro(); }
+      if (code === 'KeyG') { if (this.rig.routeFollowing) this.rig.routeFollowing = false; else { const r = this.roads.routeAt(this.rig.position); this.rig.startRoute(r.corridor, r.station); } this.ui.dismissIntro(); this.updateURL(); }
       if (code === 'KeyR') this.rig.reset();
       if (code === 'KeyP') { this.sky.cycling = !this.sky.cycling; this.ui.syncTime(this.sky.hour, this.sky.cycling); }
     };
@@ -106,7 +114,7 @@ export class Game {
   static async create(host: HTMLElement): Promise<Game> {
     const params = new URLSearchParams(location.search);
     const seed = normalizeSeed(params.get('seed') || randomSeed());
-    let quality: QualityName = 'balanced';
+    let quality: QualityName = 'ultra';
     try { const saved = localStorage.getItem('wayfarer.quality'); if (saved && saved in QUALITY) quality = saved as QualityName; } catch { /* Private browsing can deny storage. */ }
     if (matchMedia('(pointer: coarse)').matches && !params.has('quality')) quality = 'low';
     const requestedQuality = params.get('quality');
@@ -114,12 +122,20 @@ export class Game {
     const hour = params.has('hour') && Number.isFinite(Number(params.get('hour'))) ? clamp(Number(params.get('hour')), 0, 23.99) : CONFIG.sky.initialHour;
     const coordinate = (key: string) => { const value = Number(params.get(key)); return params.has(key) && Number.isFinite(value) ? clamp(value, -1e12, 1e12) : 0; };
     const position = new Vector3(coordinate('x'), 450, coordinate('z'));
-    if (!params.has('x') && !params.has('z')) {
+    const route = SCENIC_ROUTES.find((r) => r.id === params.get('route')) ?? (!params.has('x') && !params.has('z') ? SCENIC_ROUTES[0] : undefined);
+    if (route) {
+      const network = new RoadNetwork(seed, () => 0);
+      const station = findRouteStation(seed, route.corridor, route.biome, route.station);
+      const point = network.point(route.corridor, station);
+      position.set(point.x, 450, point.z);
+    } else if (!params.has('x') && !params.has('z')) {
       const vista = findBiomeViewpoint(seed, 1);
       position.set(vista.x, vista.y + 110, vista.z);
     }
     const context = await createRenderer(host, quality, params.get('renderer') === 'webgl');
-    return new Game(context, seed, quality, hour, position);
+    const game = new Game(context, seed, quality, hour, position);
+    if (route) { const station = findRouteStation(seed, route.corridor, route.biome, route.station); game.rig.startRoute(route.corridor, station); game.updateURL(); }
+    return game;
   }
 
   async start(): Promise<void> {
@@ -134,6 +150,7 @@ export class Game {
       }, (alpha, dt) => {
         this.terrain.update(this.rig.position, dt);
         this.vegetation.update(this.rig.position, dt);
+        this.roads.update(this.rig.position, dt);
         if (!this.ready) {
           this.loadTime += dt;
           // Spawn as soon as the local grid exists; keep loading distant roots behind the overlay.
@@ -167,6 +184,8 @@ export class Game {
         this.post.render(this.scene, this.rig.camera);
         const stats = this.terrain.stats;
         const vegetation = this.vegetation.stats;
+        const roads = this.roads.stats;
+        const route = this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null;
         const biome = BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)] ?? BIOMES[0];
         const lod = Array(6).fill(0) as number[];
         for (const mesh of this.terrain.group.children) {
@@ -184,10 +203,18 @@ export class Game {
           cached: stats.cached, pending: stats.pending, shifts: this.origin.shifts,
           backend: this.context.backend, touring: this.rig.touring, speed: this.rig.velocity.length(), lod,
           vegetation: vegetation.instances, vegetationBatches: vegetation.batches, vegetationCapacity: vegetation.capacity,
+          roadsEnabled: roads.roadsEnabled, roadTiles: roads.roadTiles, props: roads.props, propCapacity: roads.propCapacity,
+          routeName: route ? `${route.name} · ${route.number}` : null, routeStation: route ? route.kilometre : null,
           progress: this.terrain.wanted ? this.terrain.ready / this.terrain.wanted : 0,
         }, timestamp);
       });
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
+  }
+
+  private toggleTour(): void {
+    if (this.rig.routeFollowing || this.rig.touring) { this.rig.routeFollowing = false; this.rig.touring = false; }
+    else this.rig.touring = true;
+    this.updateURL();
   }
 
   private beginLoading(): void {
@@ -203,10 +230,16 @@ export class Game {
     this.origin.reset();
     this.terrain.reset(seed, this.quality);
     this.vegetation.reset();
+    this.roads.reset(seed);
     this.sky.reseed(seed);
     const vista = findBiomeViewpoint(seed, 1);
     this.rig.home.set(vista.x, vista.y + 110, vista.z);
     this.rig.reset();
+    const cedar = SCENIC_ROUTES[0]!;
+    const station = findRouteStation(seed, cedar.corridor, cedar.biome, cedar.station);
+    const point = this.roads.point(cedar.corridor, station);
+    this.rig.home.set(point.x, 450, point.z);
+    this.rig.startRoute(cedar.corridor, station);
     this.ui.setSeed(seed);
     this.updateURL();
   }
@@ -217,6 +250,7 @@ export class Game {
     this.quality = quality;
     this.terrain.reset(this.seed, quality);
     this.vegetation.setQuality(quality);
+    this.roads.setQuality(quality);
     this.sky.setQuality(quality);
     this.post.setQuality(quality);
     this.ui.syncPost(this.post.isEnabled);
@@ -224,6 +258,18 @@ export class Game {
     const fog = this.scene.fog as Fog;
     fog.near = QUALITY[quality].viewDistance * 0.36; fog.far = QUALITY[quality].viewDistance;
     try { localStorage.setItem('wayfarer.quality', quality); } catch { /* Storage is optional. */ }
+    this.updateURL();
+  }
+
+  private travelRoute(id: string): void {
+    const route = SCENIC_ROUTES.find((r) => r.id === id);
+    if (!route) return;
+    this.beginLoading();
+    const station = findRouteStation(this.seed, route.corridor, route.biome, route.station);
+    this.rig.startRoute(route.corridor, station);
+    this.origin.update(this.rig.position);
+    this.vegetation.rebase();
+    this.ui.toast(`Route survey · ${route.name}`);
     this.updateURL();
   }
 
@@ -236,6 +282,7 @@ export class Game {
     this.rig.velocity.set(0, 0, 0);
     this.rig.spawned = false;
     this.rig.touring = true;
+    this.rig.routeFollowing = false;
     this.origin.update(this.rig.position);
     this.vegetation.rebase();
     this.ui.toast(`Travelling to ${BIOMES[biome].name.toLowerCase()}`);
@@ -250,6 +297,8 @@ export class Game {
     url.searchParams.set('hour', this.sky.hour.toFixed(2));
     url.searchParams.set('quality', this.quality);
     url.searchParams.set('vegetation', this.vegetation.vegetationEnabled ? '1' : '0');
+    url.searchParams.set('roads', this.roads.roadsEnabled ? '1' : '0');
+    if (this.rig.routeFollowing) { const route = SCENIC_ROUTES.find((r) => r.corridor === this.rig.routeCorridor); if (route) url.searchParams.set('route', route.id); else url.searchParams.delete('route'); } else url.searchParams.delete('route');
     url.searchParams.set('postfx', this.post.isEnabled ? '1' : '0');
     history.replaceState(null, '', url);
   }
@@ -288,6 +337,7 @@ export class Game {
       quality: this.quality, biome: BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)]!.name,
       biomeDebug: this.terrain.biomeDebug, vegetationEnabled: this.vegetation.vegetationEnabled,
       windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, postfxEnabled: this.post.isEnabled, vegetation: this.vegetation.stats,
+      roads: this.roads.stats, routeFollowing: this.rig.routeFollowing, route: this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null,
       touring: this.rig.touring, speed: this.rig.velocity.length(),
       fps: this.loop.fps, drawCalls: this.context.renderer.info.render.drawCalls,
       gpuBytes: this.context.renderer.info.memory.total };
@@ -298,7 +348,7 @@ export class Game {
     this.disposed = true;
     this.abort.abort(); this.unsubscribeOrigin();
     void this.context.renderer.setAnimationLoop(null);
-    this.input.dispose(); this.ui.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.sky.dispose(); this.post.dispose();
+    this.input.dispose(); this.ui.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }
 }

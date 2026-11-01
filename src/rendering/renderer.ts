@@ -13,7 +13,7 @@ export interface RenderingContext {
 /** Keep pixels bounded on 4K/retina displays. Adaptive quality is Phase 9. */
 export function resizeRenderer(context: RenderingContext, quality: QualityName): void {
   const { renderer } = context;
-  const maxPixels = quality === 'low' ? 1_500_000 : quality === 'high' ? 4_000_000 : 2_600_000;
+  const maxPixels = QUALITY[quality].maxPixels;
   const width = window.innerWidth, height = window.innerHeight;
   const ratio = Math.min(window.devicePixelRatio || 1, QUALITY[quality].pixelRatio, Math.sqrt(maxPixels / (width * height)));
   renderer.setPixelRatio(ratio);
@@ -51,7 +51,7 @@ export async function createRenderer(host: HTMLElement, quality: QualityName, fo
       host.prepend(canvas);
       renderer.info.autoReset = false;
       renderer.toneMapping = AgXToneMapping;
-      renderer.toneMappingExposure = 0.9;
+      renderer.toneMappingExposure = 0.95;
       renderer.shadowMap.enabled = QUALITY[quality].shadows;
       renderer.shadowMap.type = PCFSoftShadowMap;
       const isGPU = (renderer.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend === true;

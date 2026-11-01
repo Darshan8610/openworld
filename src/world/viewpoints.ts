@@ -31,3 +31,23 @@ export function findBiomeViewpoint(seed: string, biome: BiomeId, nearX = 0, near
   best.y = clamp(best.y, -1000, 5000);
   return best;
 }
+
+
+/** Pick a seed-local launch station on a corridor inside the route's climate. */
+export function findRouteStation(seed: string, corridor: number, biome: BiomeId, nearStation: number, radius = 3600): number {
+  const field = new TerrainField(seed);
+  let best = nearStation, bestScore = -Infinity;
+  for (let offset = -radius; offset <= radius; offset += 180) {
+    const station = nearStation + offset;
+    const point = field.roads.point(corridor, station);
+    const y = field.naturalHeight(point.x, point.z);
+    const dx = (field.naturalHeight(point.x + 12, point.z) - field.naturalHeight(point.x - 12, point.z)) / 24;
+    const dz = (field.naturalHeight(point.x, point.z + 12) - field.naturalHeight(point.x, point.z - 12)) / 24;
+    const slope = 1 - 1 / Math.hypot(dx, 1, dz);
+    const climate = field.sample(point.x, point.z, y, slope);
+    const weight = biome >= 3 ? Math.max(climate.weights[3]!, climate.weights[4]!) : climate.weights[biome]!;
+    const score = weight * 3 - Math.abs(offset) / radius * 0.45 - (slope > 0.45 ? 1.5 : 0);
+    if (score > bestScore) { bestScore = score; best = station; }
+  }
+  return best;
+}

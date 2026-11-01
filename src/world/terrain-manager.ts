@@ -6,6 +6,7 @@ import { createTerrainMaterial } from '../rendering/terrain-material';
 import { TerrainPool } from './terrain-pool';
 import { selectTiles, tileSize, tileKey, rootKey, distanceToTile, makeTile } from './tiles';
 import type { TileCoord, TileResult } from './tiles';
+import type { RoadTileData } from './road-geometry';
 import type { FloatingOrigin } from '../core/floating-origin';
 import { clamp } from '../utils/math';
 
@@ -16,6 +17,7 @@ export interface TerrainTile {
   diagnostic: MeshBasicNodeMaterial;
   biomeMaterial: MeshBasicNodeMaterial;
   vegetation: Float32Array;
+  road: RoadTileData;
   segments: number;
   used: number;
   bounds: Box3;
@@ -82,7 +84,7 @@ export class TerrainManager {
     mesh.position.copy(center);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    return { coord: result.coord, mesh, surface, diagnostic, biomeMaterial, vegetation: result.vegetation, segments: result.segments, used: this.frame, bounds: new Box3() };
+    return { coord: result.coord, mesh, surface, diagnostic, biomeMaterial, vegetation: result.vegetation, road: result.road, segments: result.segments, used: this.frame, bounds: new Box3() };
   }
 
   update(position: Vector3, dt: number): void {

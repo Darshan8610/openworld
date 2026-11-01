@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TerrainField } from '../src/world/terrain-field';
 import { generateTile } from '../src/world/terrain-generator';
-import { generateVegetation, PLANT_STRIDE, readPlant } from '../src/world/vegetation-field';
+import { generateVegetation, PLANT_STRIDE, PLANT_EMBED, readPlant } from '../src/world/vegetation-field';
 import type { PlantPlacement } from '../src/world/vegetation-field';
 import { makeTile, tileSize } from '../src/world/tiles';
 import type { TileRequest } from '../src/world/tiles';
@@ -25,7 +25,7 @@ describe('canonical vegetation placement', () => {
       const p = readPlant(a, i, blank);
       expect(p.x).toBeGreaterThanOrEqual(0); expect(p.x).toBeLessThan(128);
       expect(p.z).toBeGreaterThanOrEqual(0); expect(p.z).toBeLessThan(128);
-      expect(p.kind).toBeGreaterThanOrEqual(0); expect(p.kind).toBeLessThan(5);
+      expect(p.kind).toBeGreaterThanOrEqual(0); expect(p.kind).toBeLessThan(PLANT_KINDS.length);
       expect(p.scale).toBeGreaterThan(0);
     }
   });
@@ -69,7 +69,7 @@ describe('canonical vegetation placement', () => {
       const h = (x: number, z: number) => tile.positions[(z * stride + x) * 3 + 1]!;
       const a = h(ix, iz), b = h(ix + 1, iz), c = h(ix, iz + 1), d = h(ix + 1, iz + 1);
       const expected = u + v <= 1 ? a + (b - a) * u + (c - a) * v : d + (c - d) * (1 - u) + (b - d) * (1 - v);
-      expect(p.y).toBeCloseTo(expected - 0.12, 4);
+      expect(p.y).toBeCloseTo(expected - PLANT_EMBED[p.kind]!, 4);
     }
   });
   it('transfers surface masks and plant buffers with the mesh', () => {
@@ -87,18 +87,25 @@ describe('canonical vegetation placement', () => {
 });
 
 describe('vegetation rendering assets', () => {
-  it('builds five finite vertex-colored meshes with wind/foliage masks and fixed quality budgets', () => {
+  it('builds ten finite vertex-colored meshes with wind/foliage/flower masks and fixed quality budgets', () => {
     for (const kind of PLANT_KINDS) {
       const geometry = createPlantGeometry(kind);
       expect(geometry.getAttribute('position').count).toBeGreaterThan(0);
       expect(geometry.getAttribute('color').count).toBe(geometry.getAttribute('position').count);
       expect(geometry.getAttribute('leaf').count).toBe(geometry.getAttribute('position').count);
       expect(geometry.getAttribute('plantFlex').count).toBe(geometry.getAttribute('position').count);
+      expect(geometry.getAttribute('flower').count).toBe(geometry.getAttribute('position').count);
       expect(Array.from(geometry.getAttribute('position').array).every(Number.isFinite)).toBe(true);
       geometry.dispose();
     }
-    expect(QUALITY.low.instanceBudgets.reduce((a, b) => a + b, 0)).toBeLessThan(10000);
-    expect(QUALITY.high.instanceBudgets.reduce((a, b) => a + b, 0)).toBeLessThan(40000);
+    const total = (q: keyof typeof QUALITY) => QUALITY[q].instanceBudgets.reduce((a, b) => a + b, 0);
+    expect(total('low')).toBeLessThan(10000);
+    expect(total('low')).toBeLessThan(total('balanced'));
+    expect(total('balanced')).toBeLessThan(total('high'));
+    expect(total('high')).toBeLessThan(total('ultra'));
+    expect(total('ultra')).toBeLessThan(75000);
+    expect(QUALITY.ultra.ambientOcclusion).toBe(true);
+    expect(QUALITY.low.ambientOcclusion).toBe(false);
   });
 });
 
@@ -119,13 +126,15 @@ describe('procedural foliage sprays', () => {
 });
 
 describe('quality-aware plant geometry', () => {
-  it('keeps the low preset cheaper than the full silhouette', () => {
-    for (const kind of ['pine', 'aspen', 'shrub', 'grass'] as const) {
+  it('keeps low <= full <= ultra silhouette cost for every species', () => {
+    for (const kind of PLANT_KINDS) {
       const low = createPlantGeometry(kind, 'low');
       const full = createPlantGeometry(kind, 'full');
+      const ultra = createPlantGeometry(kind, 'ultra');
       expect(low.getAttribute('position').count).toBeLessThanOrEqual(full.getAttribute('position').count);
+      expect(full.getAttribute('position').count).toBeLessThanOrEqual(ultra.getAttribute('position').count);
       expect(low.getAttribute('position').count).toBeGreaterThan(0);
-      low.dispose(); full.dispose();
+      low.dispose(); full.dispose(); ultra.dispose();
     }
   });
 });
