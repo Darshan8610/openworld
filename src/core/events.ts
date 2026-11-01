@@ -26,6 +26,11 @@ export interface GameEventMap {
   'vehicle:damaged': { id: string; key: string; severity: number; health: number; wrecked: boolean };
   'vehicle:recovered': { id: string; key: string };
   'vehicle:viewChanged': { id: string; view: string };
+  'world:weatherChanged': { kind: string; label: string; previous: string };
+  'world:waterEntered': { bodyId: string; kind: string; x: number; y: number; z: number };
+  'world:waterExited': { bodyId: string; x: number; y: number; z: number };
+  /** A prop rigid body crossed the waterline (splash already emitted). */
+  'world:propEnteredWater': { id: string; bodyId: string; x: number; y: number; z: number; speed: number };
   'world:originRebased': { x: number; y: number; z: number; shifts: number };
   'world:objectsReset': { seed: string };
   'physics:bodySlept': { id: string };

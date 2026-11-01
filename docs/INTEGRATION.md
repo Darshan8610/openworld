@@ -1,4 +1,4 @@
-# Combined Phases 1–8, 10–12 (Phase 9 excluded)
+# Combined Phases 1–12
 
 ## Source lines
 
@@ -9,11 +9,13 @@
 | Phases 8 and 12 NPCs/audio/menus | `arena/5bd47b5d-car-game` at `3e4d294` |
 | Phase 10 vehicles | `arena/2d03ff06-car-game` at `573ad86` |
 | Phase 11 milestone 11.1 | current integration branch, commit `ff37948` |
+| Phase 9 water & environment | `arena/298dcffe-car-game` at `3e6e5be` |
 
 The feature lines were merged with ancestry retained, not copied as disconnected
-folders. Phase 9's work line is deliberately not merged. Existing vehicle
-buoyancy/controller interfaces and character swim foundations remain: these are
-Phase 10/5 extension seams, **not** a shipped Phase 9 water/weather simulation.
+folders. Phase 9 is merged with the combined tree: hydrology carving shares the
+terrain field with road grading and building placement, buoyancy runs inside the
+existing Rapier and prop substep loops, and the weather front drives the sky and
+particles alongside the Phase 12 audio/UI systems.
 
 ## Shared composition and conflict resolution
 
@@ -34,7 +36,10 @@ Phase 10/5 extension seams, **not** a shipped Phase 9 water/weather simulation.
 - Manual Phase 11 grounded-player slots refuse saves while driving. The separate
   NPC/vehicle/building per-seed stores remain intact.
 - NPC/audio and vehicle lifecycle paths were retained together instead of selecting
-  one side of overlapping merge blocks. No Phase 9 implementation was imported.
+  one side of overlapping merge blocks.
+- Phase 9 merge: NPC toggle keeps `N`; weather cycling moved to `M` to avoid the
+  key collision. Both sides of the gameplay-layer, stats and dispose paths were
+  kept (water/particles alongside npcs/vehicles/buildings/audio).
 
 ## Known boundaries
 
@@ -52,7 +57,7 @@ merely because their respective source phases are present in the same tree.
 ## Verification in this integration session
 
 - TypeScript + production bundling: `npm run build` passed.
-- Unit/integration suite: 434 tests passed across 38 files.
+- Unit/integration suite: 478 tests passed across 45 files (Phase 9 water/weather/particles/buoyancy suites included).
 - Selected Playwright software-WebGL2 checks passed:
   - deterministic streamed-world character boot without page errors;
   - discovery chart, waypoint and manual save/load roundtrip;

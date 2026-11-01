@@ -53,6 +53,8 @@ interface HarnessOptions {
   rigBudget?: number;
   hour?: number;
   savedState?: PersistedNpcs;
+  /** Override the simulated player position (defaults to the shared nearby spot). */
+  player?: { x: number; y: number; z: number };
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -60,6 +62,7 @@ function harness(options: HarnessOptions = {}) {
   const inventory = new Inventory(events);
   const physics = new PropPhysicsWorld({ maxBodies: 16 });
   const messages: string[] = [];
+  const actor = options.player ?? player;
   const interaction = new InteractionManager({
     inventory, physics, queries, events, notify: (message) => messages.push(message),
   });
@@ -77,18 +80,18 @@ function harness(options: HarnessOptions = {}) {
     ...(options.savedState ? { savedState: options.savedState } : {}),
   });
   const stream = (ticks = 4) => {
-    for (let i = 0; i < ticks; i++) npcs.update(0.4, player, origin, 1);
+    for (let i = 0; i < ticks; i++) npcs.update(0.4, actor, origin, 1);
   };
   return {
-    npcs, events, interaction, inventory, physics, messages, stream,
+    npcs, events, interaction, inventory, physics, messages, stream, player: actor,
     setHour: (value: number) => { hour = value; },
   };
 }
 
 const FIXED = 1 / 120;
-function simulate(npcs: NpcManager, seconds: number): void {
+function simulate(npcs: NpcManager, seconds: number, actor: { x: number; y: number; z: number } = player): void {
   const steps = Math.round(seconds / FIXED);
-  for (let i = 0; i < steps; i++) npcs.fixedUpdate(FIXED, player);
+  for (let i = 0; i < steps; i++) npcs.fixedUpdate(FIXED, actor);
 }
 
 describe('NPC streaming', () => {
@@ -180,17 +183,20 @@ describe('NPC simulation', () => {
   });
 
   it('changes behaviour as the world clock advances', () => {
-    const { npcs, stream, setHour } = harness({ budget: 6 });
+    // A distant player: this test measures schedule-driven behaviour, not the
+    // proximity startle that (correctly) fires when someone stands next to an NPC.
+    const far = { x: spot.x + 400, y: spot.y, z: spot.z - 400 };
+    const { npcs, stream, setHour, player: actor } = harness({ budget: 6, player: far });
     setHour(3);
     stream();
-    simulate(npcs, 2);
+    simulate(npcs, 2, actor);
     const atNight = npcs.list();
     expect(atNight.length).toBeGreaterThan(0);
     // Nobody is pathfinding far from home at 3am: they are at rest or heading home.
     for (const npc of atNight) expect(['sleep', 'travel', 'idle', 'rest', 'work', 'wander']).toContain(npc.behaviour);
 
     setHour(12);
-    simulate(npcs, 2);
+    simulate(npcs, 2, actor);
     const midday = new Set(npcs.list().map((npc) => npc.behaviour));
     expect(midday.size).toBeGreaterThan(0);
     npcs.dispose();

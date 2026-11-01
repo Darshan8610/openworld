@@ -138,6 +138,10 @@ export class CharacterSystem {
   }
 
   get position(): Vector3 { return this.controller.position; }
+  /** True while the controller is in the swim mode (used for wake effects). */
+  get swimming(): boolean { return this.controller.swimming; }
+  /** Horizontal speed of the locomotion state, metres per second. */
+  get controllerSpeed(): number { return this.controller.motion.horizontalSpeed; }
   get ready(): boolean { return this.spawned; }
   get camera(): PerspectiveCamera { return this.cameraRig.camera; }
   get isFirstPerson(): boolean { return this.cameraRig.firstPerson; }

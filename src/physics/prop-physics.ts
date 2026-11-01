@@ -80,7 +80,19 @@ export class PropPhysicsWorld {
     }
   }
 
+  /**
+   * Optional force field applied to every body before it integrates (Phase 9
+   * buoyancy). It runs inside the fixed substep loop, so water forces never
+   * depend on the render rate.
+   */
+  forceField?: (body: RigidBody, dt: number) => void;
+
   private substep(ground: (x: number, z: number, out: GroundContact) => GroundContact): void {
+    if (this.forceField) {
+      for (const body of this.bodies.values()) {
+        if (!body.sleeping) this.forceField(body, this.fixedStep);
+      }
+    }
     for (const body of this.bodies.values()) body.step(this.fixedStep, this.gravity, ground);
     this.lastContacts = this.resolveBodyContacts();
   }
