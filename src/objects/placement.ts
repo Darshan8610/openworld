@@ -38,6 +38,8 @@ interface Emitter {
 }
 
 const MAX_STATIC_SLOPE = 0.34;
+/** Shoreline clearance probes, metres: keeps props out of the shallows. */
+const SHORE_PROBES: readonly (readonly [number, number])[] = [[2, 0], [-2, 0], [0, 2], [0, -2]];
 const MAX_DYNAMIC_SLOPE = 0.7;
 
 /** Plan every object whose canonical position lies inside the given cell. */
@@ -60,6 +62,13 @@ export function planObjectCell(cellX: number, cellZ: number, inputs: PlacementIn
     const road = queries.road(x, z);
     // Never place on the carriageway, shoulder or the graded cut/fill formation.
     if (Math.abs(road.lateral) < 8.6) return;
+    // Phase 9: never place inside a water body or on its shoreline. Caches and
+    // survey posts belong on dry, walkable ground — and a submerged prop would be
+    // a physics body spawned inside a lake bed.
+    if (queries.water(x, z)) return;
+    for (const [dx, dz] of SHORE_PROBES) {
+      if (queries.water(x + dx, z + dz)) return;
+    }
     // Face the road so signs, gates and lamps read correctly from the verge.
     const centre = queries.nearestRoadPoint(x, z);
     const yaw = (Math.abs(road.lateral) < 26 ? Math.atan2(centre.x - x, centre.z - z) : cellRandom(Math.round(x), Math.round(z), seedHash, 0x71a3) * Math.PI * 2) + yawOffset;

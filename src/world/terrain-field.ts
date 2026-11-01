@@ -6,6 +6,7 @@ import type { ClimateSample } from './biomes';
 import { RoadNetwork } from './road-network';
 import { BuildingPlacementField } from './buildings/placement';
 import type { Earthwork } from './road-network';
+import { WaterField } from './water-field';
 
 /**
  * Continuous world-space height field, independent of chunk boundaries or LOD.
@@ -21,7 +22,10 @@ export class TerrainField {
   readonly biomes: BiomeField;
   readonly roads: RoadNetwork;
   readonly buildings: BuildingPlacementField;
-  private readonly roadWork: Earthwork = { corridor: 0, station: 0, lateral: 0, tangentX: 1, tangentZ: 0, normalX: 0, normalZ: 1, curvature: 0, pullout: 0, height: 0, weight: 0 };
+  /** Phase 9 hydrology: basin beds and river channels carved into the landform. */
+  readonly water: WaterField;
+  /** Scratch formation record for the graded-height / water-gate path. */
+  private readonly gateWork: Earthwork = { corridor: 0, station: 0, lateral: 0, tangentX: 1, tangentZ: 0, normalX: 0, normalZ: 1, curvature: 0, pullout: 0, height: 0, weight: 0 };
 
   constructor(public readonly seed: string) {
     const hash = hashSeed(seed);
@@ -32,6 +36,11 @@ export class TerrainField {
     this.biomes = new BiomeField(seed);
     this.roads = new RoadNetwork(seed, (x, z) => this.naturalHeight(x, z));
     this.buildings = new BuildingPlacementField(seed, this);
+    this.water = new WaterField(
+      seed,
+      (x, z) => this.naturalHeight(x, z),
+      (x, z) => this.gradedHeight(x, z),
+    );
   }
 
   naturalHeight(x: number, z: number): number {
@@ -50,9 +59,34 @@ export class TerrainField {
     return 48 + continent * 95 + mountains + (rolling + gullies + fine) * lerp(0.35, 1, valley);
   }
 
+  /**
+   * Ground height for gameplay and for the streamed mesh.
+   *
+   * Order matters and is load-bearing:
+   *   1. natural landform              (Phase 1/2)
+   *   2. graded road formation         (Phase 3)
+   *   3. water beds carved beneath it  (Phase 9)
+   *
+   * Water yields to engineered ground: the carve is scaled by `1 - roadWeight`,
+   * so a highway is never silently drowned by a lake it crosses. This is the only
+   * place terrain is lowered for water — the water renderer, the physics
+   * heightfield and the query layer all read the same result.
+   */
   height(x: number, z: number): number {
+    const graded = this.gradedHeight(x, z);
+    const carve = this.water.carve(x, z);
+    return carve ? lerp(graded, carve.bed, carve.weight) : graded;
+  }
+
+  /**
+   * Ground height before water is carved: the natural landform with the graded
+   * road formation applied. Water bodes only ever *lower* this surface, and the
+   * water field contains its bodies by it, so a lake never reports water where a
+   * road embankment stands above the waterline.
+   */
+  gradedHeight(x: number, z: number): number {
     const natural = this.naturalHeight(x, z);
-    const work = this.roads.earthwork(x, z, this.roadWork);
+    const work = this.roads.earthwork(x, z, this.gateWork);
     // Only the road formation is altered; climate and biome fields stay continuous.
     return work.weight > 0 ? lerp(natural, work.height, work.weight) : natural;
   }

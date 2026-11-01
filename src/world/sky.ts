@@ -24,6 +24,17 @@ export class SkySystem {
   readonly horizon = new Color();
   hour: number = CONFIG.sky.initialHour;
   cycling = true;
+  /**
+   * Phase 9 weather inputs. The sky owns its defaults, so it renders correctly
+   * with no weather system attached; the controller then drives these values.
+   */
+  cloudCoverage = 0.32;
+  cloudDensity = 0.42;
+  cloudSpeed = 1;
+  sunScale = 1;
+  ambientScale = 1;
+  /** True once a weather controller is driving the cloud/light values. */
+  weatherDriven = false;
   private readonly sky = new SkyMesh();
   private readonly environmentSky = new SkyMesh();
   private readonly environmentScene = new Scene();
@@ -101,6 +112,24 @@ export class SkySystem {
 
   setHour(hour: number): void { this.hour = ((hour % 24) + 24) % 24; }
 
+  /**
+   * Drive the sky from the weather controller. Values are already eased by the
+   * weather system, so the sky never snaps; passing `weatherDriven = false`
+   * restores the authored baseline.
+   */
+  setWeather(weather: {
+    cloudCoverage: number; cloudDensity: number; cloudSpeed: number;
+    sunScale: number; ambientScale: number;
+  } | null): void {
+    if (!weather) { this.weatherDriven = false; return; }
+    this.weatherDriven = true;
+    this.cloudCoverage = clamp(weather.cloudCoverage, 0, 1);
+    this.cloudDensity = clamp(weather.cloudDensity, 0, 1);
+    this.cloudSpeed = clamp(weather.cloudSpeed, 0.2, 6);
+    this.sunScale = clamp(weather.sunScale, 0.05, 1.4);
+    this.ambientScale = clamp(weather.ambientScale, 0.4, 1.8);
+  }
+
   update(dt: number, worldPosition: Vector3, camera: PerspectiveCamera, forceEnvironment = false): void {
     if (this.cycling) this.hour = (this.hour + dt * 24 / CONFIG.sky.secondsPerDay) % 24;
     const latitude = CONFIG.sky.latitude * Math.PI / 180;
@@ -120,10 +149,13 @@ export class SkySystem {
     this.environmentSky.sunPosition.value.copy(this.sky.sunPosition.value);
     this.environmentSky.turbidity.value = this.sky.turbidity.value;
     this.environmentSky.rayleigh.value = this.sky.rayleigh.value;
-    this.sky.showSunDisc.value = smoothstep(-0.04, 0.0, elevation);
-    this.sky.cloudCoverage.value = 0.32;
+    this.sky.showSunDisc.value = smoothstep(-0.04, 0.0, elevation) * (1 - this.cloudCoverage * 0.8);
+    this.sky.cloudCoverage.value = this.cloudCoverage;
+    this.sky.cloudDensity.value = this.cloudDensity;
+    this.sky.cloudSpeed.value = 0.000025 * this.cloudSpeed;
     this.group.position.copy(camera.position);
-    this.stars.material.opacity = 1 - smoothstep(-0.18, 0.02, elevation);
+    // Cloud cover hides the stars; a clear night keeps the whole field.
+    this.stars.material.opacity = (1 - smoothstep(-0.18, 0.02, elevation)) * (1 - this.cloudCoverage * 0.92);
     this.stars.rotation.y = this.hour * Math.PI / 12;
     this.moon.position.copy(this.sunDirection).multiplyScalar(-16000);
     this.moon.position.x += 1600;
@@ -132,8 +164,8 @@ export class SkySystem {
     this.moon.visible = elevation < 0.1;
 
     this.sun.color.setRGB(1, 0.95 - golden * 0.27, 0.85 - golden * 0.43);
-    this.sun.intensity = 3.6 * smoothstep(-0.025, 0.16, elevation);
-    this.ambient.intensity = 0.14 + day * 0.9;
+    this.sun.intensity = 3.6 * smoothstep(-0.025, 0.16, elevation) * this.sunScale;
+    this.ambient.intensity = (0.14 + day * 0.9) * this.ambientScale;
     this.ambient.color.setRGB(0.48 + day * 0.25, 0.61 + day * 0.17, 0.85);
     this.moonLight.intensity = (1 - day) * 0.16;
     this.moonLight.position.copy(worldPosition).sub(this.sunDirection.clone().multiplyScalar(4000));

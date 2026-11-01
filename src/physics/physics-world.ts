@@ -3,6 +3,7 @@ import type {
   Collider, ColliderDesc, EventQueue, RayColliderIntersection, RigidBody, World as RapierWorld,
 } from '@dimforge/rapier3d-compat';
 import { CONFIG } from '../config';
+import { shapeVolume } from './buoyancy';
 import type { FloatingOrigin } from '../core/floating-origin';
 import type { EventBus } from '../game/events';
 import type { PhysicsMaterialId } from './materials';
@@ -90,6 +91,12 @@ export interface PhysicsBody {
   readonly body: RigidBody;
   readonly colliders: Collider[];
   readonly entityId?: string;
+  /**
+   * Total volume of the primitive colliders in m³, accumulated as colliders are
+   * attached. Buoyancy reads it to derive displaced volume without re-inspecting
+   * shape descriptors. Trimeshes/heightfields have no closed volume.
+   */
+  volume?: number;
 }
 
 export interface PhysicsRayHit {
@@ -183,6 +190,12 @@ export class PhysicsWorld {
   private cachedStats?: PhysicsStats;
   private failed = false;
   paused = false;
+  /**
+   * Called before every internal fixed substep (never from a render delta).
+   * Phase 9 buoyancy uses it to apply water forces at the physics rate; the hook
+   * exists so force fields never force callers to reach inside the step loop.
+   */
+  preStep?: (dt: number) => void;
 
   private constructor(api: RapierModule, options: PhysicsOptions) {
     this.api = api;
@@ -215,6 +228,9 @@ export class PhysicsWorld {
 
   get engineVersion(): string { return this.api.version(); }
   bodyById(id: number): PhysicsBody | undefined { return this.bodies.get(id); }
+
+  /** Iterate live bodies (read-only); used by force fields and debug views. */
+  entries(): Iterable<PhysicsBody> { return this.bodies.values(); }
   get bodyCount(): number { return this.bodies.size; }
   get colliderCountValue(): number { return this.colliderCount; }
   get bodyBudget(): number { return this.maxBodies; }
@@ -276,6 +292,8 @@ export class PhysicsWorld {
     if (options.offset) descriptor.setTranslation(options.offset.x, options.offset.y, options.offset.z);
     if (options.rotation) descriptor.setRotation(options.rotation);
     const collider = this.world.createCollider(descriptor, record.body);
+    const volume = shapeVolume(shape);
+    if (volume > 0) record.volume = (record.volume ?? 0) + volume;
     record.colliders.push(collider);
     this.colliderCount += 1;
     if (options.sensor) this.sensorCount += 1;
@@ -351,6 +369,7 @@ export class PhysicsWorld {
     let steps = 0;
     try {
       while (this.accumulator >= this.fixedStep && steps < this.maxSubSteps) {
+        this.preStep?.(this.fixedStep);
         this.world.step(this.queue);
         this.drainCollisionEvents();
         this.accumulator -= this.fixedStep;

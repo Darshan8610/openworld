@@ -31,7 +31,7 @@ systems a story will later plug into.
 | **6 — Objects & interaction** ✅ | Interactable interface (id, prompt, range, predicates, cooldown, persistent state), context-sensitive prompts, doors/containers/switches/pickups, physics props, object persistence. Gamepad + touch input abstraction remain pending | 4, 5 |
 | **7 — Buildings & interiors** | Modular building templates and prefabs, terrain-conforming placement, collision, room graphs, doors, stairs, furniture, interior lighting, indoor/outdoor transitions, interior streaming | 4, 6 |
 | **8 — NPCs & life simulation** ✅ | NPC entities, behaviour FSM/behaviour trees, navmesh over streamed terrain, perception (vision cones, LOS, events), schedules, interaction/dialogue hooks, LOD population management, persistence | 4, 5 |
-| **9 — Water & environment** | Lakes/rivers/ocean bodies, water shading with capability fallbacks, buoyancy via multi-point displacement, swimming/diving, splashes and wakes, weather controller (rain/snow/fog/storm) driving light, surface wetness, particles | 4, 5 |
+| **9 — Water & environment** ✅ | Lakes/rivers/ocean bodies, water shading with capability fallbacks, buoyancy via multi-point displacement, swimming/diving, splashes and wakes, weather controller (rain/snow/fog/storm) driving light, surface wetness, particles | 4, 5 |
 | **10 — Universal vehicles** | Shared vehicle interface (seats, entry/exit, camera, audio, damage, persistence) with distinct controllers: raycast-suspension road vehicles, motorcycle/bicycle balance, aircraft aerodynamics + helicopters, watercraft buoyancy/propulsion, sailing | 4, 9 |
 | **11 — Discovery & gameplay infrastructure** | World map + minimap from canonical coordinates, route calculation, waypoints, discovery/fog-of-war, save/load with versioned schemas and migration, inventory hooks, generic mission/objective/flag system on the event bus | 4–10 |
 | **12 — Audio, UX & polish** ✅ | Spatial audio with zones and mixing, procedural footsteps, main and pause menus, settings, accessibility, loading/recovery, presentation pass | all |
@@ -135,8 +135,8 @@ source audit, integration model, validation results and remaining work.
 
 ## Combined branch integration
 
-Phases 1–8, 10, Phase 11 milestone 11.1, and 12 are now assembled in one tree.
-Phase 9 remains intentionally excluded while under development. See
+Phases 1–12 are assembled in one tree, including Phase 9 water/environment.
+Phase 11 remains milestone 11.1, not the complete discovery/gameplay roadmap. See
 [INTEGRATION.md](INTEGRATION.md) for merged source commits, validation and known
 cross-phase adapter gaps. Presence in the combined tree is not a declaration that
 all planned features of a phase are complete.
