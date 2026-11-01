@@ -1,4 +1,44 @@
-# Wayfarer — Infinite Open-World Driving Game
+# Wayfarer — Infinite Open World
+
+## Phase 7 — buildings & interiors
+
+This branch adds the **Phase 7 architecture slice** to the existing Phase 3 world,
+without replacing its terrain, roads, biomes, vegetation, workers or renderer.
+Phases 4–6 (central physics, human character and generic interactions) are being
+implemented separately and **are not assumed to exist on this branch**.
+
+- Three genuinely enterable modular templates: timber cabin, roadside workshop
+  and a two-storey lodge with seventeen stair treads and an open stairwell.
+- Deterministic, road-aware lots; terrain-surveyed foundations, porches and entry
+  steps; validated authored placements; vegetation clearance in workers.
+- Bounded exterior/interior streaming, furniture collision, opening/closing doors,
+  room transitions, night-lit windows and quality-budgeted interior lights.
+- Canonical collision boxes, explicit room/entrance/stair graphs, door interaction
+  bindings and typed event ports for integration with the other agents' systems.
+- Versioned, seed-separated door modifications (not a general save-slot system).
+- Optional **architecture inspection** using the existing survey camera. This is
+  a developer bridge, **not** the Phase 5 human character or a rigid-body engine.
+
+### Try the buildings
+
+Open **World settings → Inspect a nearby building**, or press **F7** with the
+canvas focused. Use **WASD** to move, drag to look, **F** (or the prompt button) to
+operate a door, and **Q/E** to inspect vertically. Supported stairs also snap the
+inspection camera upward tread by tread. **F7** returns to free-flight survey mode.
+The settings include a building collision overlay. Inspection links retain the
+existing seed/quality/renderer parameters and add `building=<stable-id>`; reopening
+a link starts safely on the building's porch.
+
+These are procedural architectural placeholder assets, not production art.
+No NPCs, human models, story, physics engine, or general inventory are invented.
+See [Phase 7 engineering notes](docs/PHASE7.md),
+[agent integration guide](docs/BUILDING_INTEGRATION.md),
+[change inventory](docs/PHASE7-CHANGELOG.md), and the
+[new open-world roadmap](docs/ROADMAP.md).
+
+---
+
+## Preserved Phase 3 foundation
 
 **Phase 3: roads through the wild.** A seeded, infinite, chunk-streamed landscape with five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, roadside props, route-following survey travel, and an Ultra graphics preset. Built on the Phase 1 world foundation: Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers, floating origin, dynamic day/night sky, and a free-flight survey camera.
 
@@ -16,8 +56,8 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 36 unit tests (noise, streaming, origin, terrain, biomes, vegetation, roads, overlooks)
-npm run test:browser  # 11 Playwright browser tests (requires Chromium)
+npm test              # 69 unit/integration tests (world generation, streaming, buildings, collision, state, lifecycle)
+npm run test:browser  # 16 Playwright browser scenarios (requires Chromium)
 ```
 
 For browser tests, install Chromium once:
@@ -45,6 +85,8 @@ npx playwright install chromium
 | L | Toggle LOD debug colors |
 | H | Hide/show HUD |
 | F3 | Performance overlay |
+| F7 | Enter/leave architecture inspection |
+| F (near a door) | Open/close door in the inspection bridge |
 
 The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), vegetation, roads, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1`, `roads=0|1`, `postfx=0|1` and `route=cedar|golden|snowline` alongside seed, position, hour, quality, and renderer.
 
@@ -85,6 +127,9 @@ src/
                           viewpoints, sky
   rendering/              renderer factory, post-processing (GTAO/bloom/FXAA), terrain
                           and road materials, surface/foliage textures, plant and prop geometry
+  world/buildings/        templates, canonical sites, collision/nav/interaction ports,
+                          interiors, door state and bounded building streaming
+  rendering/buildings/    shared architectural geometry, PBR materials, collision debug
   ui/                     HUD/settings shell and styles
   workers/                terrain worker entry
   utils/                  seeded RNG and math
@@ -104,4 +149,4 @@ See [docs/PHASE1.md](docs/PHASE1.md) for the world foundation, [docs/PHASE2.md](
 
 ## Assets and licenses
 
-No paid assets. Terrain, sky, stars, moon, biomes, surface/road textures, vegetation, cliffs, road signs, props and materials are procedural. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+No paid assets. Terrain, sky, stars, moon, biomes, surface/road textures, vegetation, cliffs, road signs, props, modular buildings, furniture and materials are procedural. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

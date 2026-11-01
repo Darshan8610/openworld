@@ -19,6 +19,10 @@ import { SkySystem } from '../world/sky';
 import { Interface } from '../ui/interface';
 import { normalizeSeed, randomSeed } from '../utils/random';
 import { clamp } from '../utils/math';
+import { BuildingManager } from '../world/buildings/manager';
+import { BuildingExperience } from '../world/buildings/experience';
+import { TerrainField } from '../world/terrain-field';
+import type { BuildingStorage } from '../world/buildings/state';
 
 /** Composition root: subsystem ownership and lifecycle are explicit. */
 export class Game {
@@ -30,6 +34,8 @@ export class Game {
   private readonly terrain: TerrainManager;
   private readonly vegetation: VegetationManager;
   private readonly roads: RoadManager;
+  private readonly buildings: BuildingManager;
+  private readonly buildingExperience: BuildingExperience;
   private readonly rig: SurveyCamera;
   private readonly sky: SkySystem;
   private readonly post: PostProcessing;
@@ -47,7 +53,7 @@ export class Game {
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     this.context = context; this.seed = seed; this.quality = quality;
-    this.scene.name = 'Wayfarer / Phase 3';
+    this.scene.name = 'Wayfarer / Phase 7 architecture';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
     this.terrain = new TerrainManager(this.origin, seed, quality, (error) => this.fail(error));
@@ -59,14 +65,21 @@ export class Game {
     this.rig = new SurveyCamera(this.input, this.origin, this.terrain, this.roads);
     this.rig.position.copy(position); this.rig.previous.copy(position); this.rig.home.copy(position);
     this.origin.update(position);
+    let buildingStorage: BuildingStorage | undefined;
+    try { buildingStorage = window.localStorage; } catch (error) { console.warn('[Buildings] Browser storage unavailable; door state is session-only.', error); }
+    this.buildings = new BuildingManager({
+      seed, quality, origin: this.origin, terrain: this.terrain, storage: buildingStorage,
+      onReservationsChanged: () => this.vegetation.invalidateReservations(),
+    });
+    this.vegetation.setReservationQuery((x, z) => this.buildings.field.isAuthoredReserved(x, z));
     this.sky = new SkySystem(context.renderer, this.scene, seed, quality);
     this.sky.setHour(hour);
     this.post = new PostProcessing(context.renderer, this.scene, this.rig.camera, quality);
     const postParam = new URLSearchParams(location.search).get('postfx');
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
-    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group);
-    this.unsubscribeOrigin = this.origin.onChange((delta) => { this.terrain.rebase(delta); this.vegetation.rebase(); this.roads.rebase(delta); });
+    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.buildings.group);
+    this.unsubscribeOrigin = this.origin.onChange((delta) => { this.terrain.rebase(delta); this.vegetation.rebase(); this.roads.rebase(delta); this.buildings.rebase(); });
     this.ui = new Interface(seed, hour, quality, context.backend, {
       seed: (value) => this.changeSeed(normalizeSeed(value)),
       randomSeed: () => this.changeSeed(randomSeed()),
@@ -89,6 +102,7 @@ export class Game {
       viewpoint: (value) => this.travelTo(value),
       stats: (value) => this.ui.showStats(value),
     });
+    this.buildingExperience = new BuildingExperience(this.buildings, this.rig, this.terrain, { loading: () => this.beginLoading(), changed: () => this.updateURL(), toast: (message) => this.ui.toast(message) });
     this.ui.syncTime(hour, this.sky.cycling);
     this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
     this.ui.syncPost(this.post.isEnabled);
@@ -122,12 +136,16 @@ export class Game {
     const hour = params.has('hour') && Number.isFinite(Number(params.get('hour'))) ? clamp(Number(params.get('hour')), 0, 23.99) : CONFIG.sky.initialHour;
     const coordinate = (key: string) => { const value = Number(params.get(key)); return params.has(key) && Number.isFinite(value) ? clamp(value, -1e12, 1e12) : 0; };
     const position = new Vector3(coordinate('x'), 450, coordinate('z'));
-    const route = SCENIC_ROUTES.find((r) => r.id === params.get('route')) ?? (!params.has('x') && !params.has('z') ? SCENIC_ROUTES[0] : undefined);
+    const requestedBuilding = params.get('building');
+    const building = requestedBuilding ? new TerrainField(seed).buildings.getById(requestedBuilding) : undefined;
+    const route = building ? undefined : (SCENIC_ROUTES.find((r) => r.id === params.get('route')) ?? (!params.has('x') && !params.has('z') ? SCENIC_ROUTES[0] : undefined));
     if (route) {
       const network = new RoadNetwork(seed, () => 0);
       const station = findRouteStation(seed, route.corridor, route.biome, route.station);
       const point = network.point(route.corridor, station);
       position.set(point.x, 450, point.z);
+    } else if (building) {
+      position.set(building.position.x, building.position.y + 1.65, building.position.z);
     } else if (!params.has('x') && !params.has('z')) {
       const vista = findBiomeViewpoint(seed, 1);
       position.set(vista.x, vista.y + 110, vista.z);
@@ -135,6 +153,7 @@ export class Game {
     const context = await createRenderer(host, quality, params.get('renderer') === 'webgl');
     const game = new Game(context, seed, quality, hour, position);
     if (route) { const station = findRouteStation(seed, route.corridor, route.biome, route.station); game.rig.startRoute(route.corridor, station); game.updateURL(); }
+    if (building) game.buildingExperience.visit(building);
     return game;
   }
 
@@ -146,11 +165,13 @@ export class Game {
     if (this.disposed || document.hidden) return;
     try {
       this.loop.tick(timestamp, (dt) => {
-        if (this.ready) this.rig.fixedUpdate(dt);
+        if (this.ready) { this.rig.fixedUpdate(dt); this.buildings.fixedUpdate(dt, this.rig.position); }
       }, (alpha, dt) => {
         this.terrain.update(this.rig.position, dt);
         this.vegetation.update(this.rig.position, dt);
         this.roads.update(this.rig.position, dt);
+        this.buildings.update(this.rig.position, dt, this.sky.hour);
+        this.buildingExperience.update(timestamp);
         if (!this.ready) {
           this.loadTime += dt;
           // Spawn as soon as the local grid exists; keep loading distant roots behind the overlay.
@@ -212,6 +233,7 @@ export class Game {
   }
 
   private toggleTour(): void {
+    if (this.rig.inspecting) this.buildingExperience.stop();
     if (this.rig.routeFollowing || this.rig.touring) { this.rig.routeFollowing = false; this.rig.touring = false; }
     else this.rig.touring = true;
     this.updateURL();
@@ -226,7 +248,9 @@ export class Game {
 
   private changeSeed(seed: string): void {
     this.beginLoading();
+    this.buildingExperience.stop();
     this.seed = seed;
+    this.buildings.reset(seed);
     this.origin.reset();
     this.terrain.reset(seed, this.quality);
     this.vegetation.reset();
@@ -251,6 +275,7 @@ export class Game {
     this.terrain.reset(this.seed, quality);
     this.vegetation.setQuality(quality);
     this.roads.setQuality(quality);
+    this.buildings.setQuality(quality);
     this.sky.setQuality(quality);
     this.post.setQuality(quality);
     this.ui.syncPost(this.post.isEnabled);
@@ -264,6 +289,7 @@ export class Game {
   private travelRoute(id: string): void {
     const route = SCENIC_ROUTES.find((r) => r.id === id);
     if (!route) return;
+    this.buildingExperience.stop();
     this.beginLoading();
     const station = findRouteStation(this.seed, route.corridor, route.biome, route.station);
     this.rig.startRoute(route.corridor, station);
@@ -274,6 +300,7 @@ export class Game {
   }
 
   private travelTo(biome: BiomeId): void {
+    this.buildingExperience.stop();
     const radius = biome >= 3 ? 9000 : 6000;
     const vista = findBiomeViewpoint(this.seed, biome, this.rig.position.x, this.rig.position.z, radius);
     this.beginLoading();
@@ -300,6 +327,8 @@ export class Game {
     url.searchParams.set('roads', this.roads.roadsEnabled ? '1' : '0');
     if (this.rig.routeFollowing) { const route = SCENIC_ROUTES.find((r) => r.corridor === this.rig.routeCorridor); if (route) url.searchParams.set('route', route.id); else url.searchParams.delete('route'); } else url.searchParams.delete('route');
     url.searchParams.set('postfx', this.post.isEnabled ? '1' : '0');
+    const building = this.buildingExperience?.activeBuilding;
+    if (building) url.searchParams.set('building', building); else url.searchParams.delete('building');
     history.replaceState(null, '', url);
   }
 
@@ -336,7 +365,7 @@ export class Game {
       shifts: this.origin.shifts, hour: this.sky.hour, ...this.terrain.stats,
       quality: this.quality, biome: BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)]!.name,
       biomeDebug: this.terrain.biomeDebug, vegetationEnabled: this.vegetation.vegetationEnabled,
-      windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, postfxEnabled: this.post.isEnabled, vegetation: this.vegetation.stats,
+      windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, postfxEnabled: this.post.isEnabled, inspecting: this.rig.inspecting, buildings: this.buildings.snapshot(), vegetation: this.vegetation.stats,
       roads: this.roads.stats, routeFollowing: this.rig.routeFollowing, route: this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null,
       touring: this.rig.touring, speed: this.rig.velocity.length(),
       fps: this.loop.fps, drawCalls: this.context.renderer.info.render.drawCalls,
@@ -348,6 +377,7 @@ export class Game {
     this.disposed = true;
     this.abort.abort(); this.unsubscribeOrigin();
     void this.context.renderer.setAnimationLoop(null);
+    this.buildingExperience.dispose(); this.buildings.dispose();
     this.input.dispose(); this.ui.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }

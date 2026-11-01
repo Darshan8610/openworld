@@ -50,6 +50,9 @@ export class VegetationManager {
   private counts = Array<number>(PLANT_KINDS.length).fill(0);
   private truncated = false;
   windEnabled = true;
+  private reservationQuery?: (x: number, z: number) => boolean;
+  setReservationQuery(query: (x: number, z: number) => boolean): void { this.reservationQuery = query; this.dirty = true; }
+  invalidateReservations(): void { this.dirty = true; }
 
   constructor(private readonly terrain: TerrainManager, private readonly origin: FloatingOrigin, public quality: QualityName) {
     this.group.name = 'Streamed vegetation / ten instance batches';
@@ -139,6 +142,7 @@ export class VegetationManager {
         const p = readPlant(data, i, this.plant);
         if (p.random > preset.vegetationDensity) continue;
         const x = worldX + p.x, z = worldZ + p.z;
+        if (this.reservationQuery?.(x, z)) continue;
         const radius = p.kind === 3 || p.kind === 7 || p.kind === 8 ? preset.grassDistance : p.kind === 2 ? preset.vegetationDistance * 0.65 : preset.vegetationDistance;
         const d = Math.hypot(x - position.x, z - position.z);
         if (d > radius) continue;
