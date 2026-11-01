@@ -39,6 +39,9 @@ import { InteractionManager } from '../interaction/manager';
 import { ObjectSystem } from '../objects/object-system';
 import { ObjectStateStore } from '../persistence/object-store';
 import type { PersistedObjects } from '../persistence/object-store';
+import { NpcManager } from '../npc/npc-manager';
+import { NpcStateStore } from '../persistence/npc-store';
+import type { PersistedNpcs } from '../npc/types';
 import type { ItemStack } from '../objects/items';
 import { clearObjectGeometryCache } from '../rendering/object-geometry';
 import type { ActorView } from '../interaction/types';
@@ -92,6 +95,10 @@ export class Game {
   private interaction!: InteractionManager;
   private objects!: ObjectSystem;
   private objectsEnabled = true;
+  /** Phase 8: streamed NPC population sharing the world queries and interaction. */
+  private npcs!: NpcManager;
+  private readonly npcStore = new NpcStateStore();
+  private npcsEnabled = true;
   private interactPressed = false;
   private saveDirty = false;
   private lastSave = 0;
@@ -122,6 +129,7 @@ export class Game {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) this.vegetation.setWind(false);
     this.buildGameplayLayer(seed);
     if (new URLSearchParams(location.search).get('objects') === '0') { this.objectsEnabled = false; this.objects.setEnabled(false); }
+    if (new URLSearchParams(location.search).get('npcs') === '0') { this.npcsEnabled = false; this.npcs.setEnabled(false); }
     this.rig = new SurveyCamera(this.input, this.origin, this.terrain, this.roads);
     this.rig.position.copy(position); this.rig.previous.copy(position); this.rig.home.copy(position);
     this.origin.update(position);
@@ -142,7 +150,7 @@ export class Game {
     const postParam = new URLSearchParams(location.search).get('postfx');
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
-    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group);
+    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group, this.npcs.group);
     this.world = new WorldManager({
       origin: this.origin, terrain: this.terrain, vegetation: this.vegetation, roads: this.roads, events: this.worldEvents,
     });
@@ -152,6 +160,7 @@ export class Game {
       this.vegetation.rebase();
       this.roads.rebase(delta);
       this.objects.rebase(this.origin.absolute);
+      this.npcs.rebase(this.origin.absolute);
       this.events.emit('world:originRebased', {
         x: this.origin.absolute.x, y: this.origin.absolute.y, z: this.origin.absolute.z, shifts: this.origin.shifts,
       });
@@ -172,6 +181,9 @@ export class Game {
       vegetation: (value) => { this.vegetation.setEnabled(value); this.updateURL(); },
       roads: (value) => { this.roads.setEnabled(value); this.updateURL(); },
       objects: (value) => { this.objectsEnabled = value; this.objects.setEnabled(value); this.updateURL(); },
+      npcs: (value) => { this.npcsEnabled = value; this.npcs.setEnabled(value); this.updateURL(); },
+      dialogueTopic: (index) => this.selectDialogueTopic(index),
+      dialogueEnd: () => this.endDialogue(),
       route: (value) => this.travelRoute(value),
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
@@ -193,9 +205,12 @@ export class Game {
     this.ui.setPhysicsAvailable(false);
     this.ui.syncCamera(this.mode, this.character.isFirstPerson);
     this.ui.syncObjects(this.objects.objectsEnabled);
+    this.ui.syncNpcs(this.npcs.isEnabled);
     this.ui.setPack(this.inventory.stacks());
     this.events.on('inventory:changed', ({ items }) => this.ui.setPack(items));
     this.events.on('object:stateChanged', () => { this.saveDirty = true; });
+    this.events.on('npc:talkStarted', () => { this.saveDirty = true; });
+    this.events.on('npc:talkEnded', () => { this.ui?.setDialogue(null); });
     this.events.on('inventory:changed', () => { this.saveDirty = true; });
     if (this.restoreNotice) this.ui.toast(this.restoreNotice);
     this.input.onShortcut = (code) => {
@@ -205,6 +220,18 @@ export class Game {
       if (code === 'KeyB') { this.terrain.setBiomeDebug(!this.terrain.biomeDebug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
       if (code === 'KeyE') this.interactPressed = true;
       if (code === 'KeyO') { this.objectsEnabled = !this.objectsEnabled; this.objects.setEnabled(this.objectsEnabled); this.ui.syncObjects(this.objectsEnabled); this.updateURL(); }
+      if (code === 'KeyN') {
+        this.npcsEnabled = !this.npcsEnabled;
+        this.npcs.setEnabled(this.npcsEnabled);
+        this.ui.syncNpcs(this.npcsEnabled);
+        this.updateURL();
+        this.ui.toast(this.npcsEnabled ? 'People return to the world' : 'People hidden — the world still streams');
+      }
+      // Conversation replies: number keys choose a topic, Escape steps back.
+      if (this.npcs.conversationView) {
+        if (code === 'Escape') this.endDialogue();
+        else if (/^Digit[1-4]$/.test(code)) this.selectDialogueTopic(Number(code.slice(5)) - 1);
+      }
       if (code === 'KeyV') { this.vegetation.setEnabled(!this.vegetation.vegetationEnabled); this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled); this.updateURL(); }
       if (code === 'KeyT') { this.toggleTour(); this.ui.dismissIntro(); }
       if (code === 'KeyG') { if (this.rig.routeFollowing) this.rig.routeFollowing = false; else { const r = this.roads.routeAt(this.rig.position); this.rig.startRoute(r.corridor, r.station); } this.ui.dismissIntro(); this.updateURL(); }
@@ -317,6 +344,7 @@ export class Game {
         if (this.mode === 'character') this.character.fixedUpdate(dt);
         else this.rig.fixedUpdate(dt);
         this.propPhysics.step(dt, this.groundSample);
+        this.npcs.fixedUpdate(dt, this.resolveActivePosition());
         this.updateInteraction(dt);
       }, (alpha, dt) => {
         const focus = this.resolveActivePosition();
@@ -349,6 +377,8 @@ export class Game {
         }
         this.renderActive(this.ready ? alpha : 1, dt);
         this.objects.update(dt, focus, this.origin.absolute, alpha);
+        this.npcs.update(dt, focus, this.origin.absolute, alpha);
+        this.ui.setDialogue(this.npcs.conversationView);
         this.origin.toLocal(focus, this.localPosition);
         if (this.ready) this.sky.update(dt, this.localPosition, this.activeCamera);
         const fog = this.scene.fog as Fog;
@@ -363,6 +393,7 @@ export class Game {
         const worldStats = this.world.stats;
         const objects = this.objects.stats;
         const propPhysics = this.propPhysics.stats;
+        const npcStats = this.npcs.stats;
         const route = this.mode === 'survey' && this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null;
         const biome = BIOMES[this.terrain.biomeAt(focus.x, focus.z)] ?? BIOMES[0];
         const character = this.character.snapshot();
@@ -393,6 +424,9 @@ export class Game {
           routeName: route ? `${route.name} · ${route.number}` : null, routeStation: route ? route.kilometre : null,
           objects: objects.active, objectBodies: propPhysics.bodies, objectSleeping: propPhysics.sleeping,
           inventoryItems: this.inventory.total, interactionTarget: this.interaction.targetId,
+          npcActive: npcStats.active, npcFull: npcStats.full, npcReduced: npcStats.reduced,
+          npcBackground: npcStats.background, npcRigs: npcStats.rigs, npcRigCapacity: npcStats.rigCapacity,
+          npcNearest: npcStats.nearest, npcSearches: npcStats.searches, npcTruncated: npcStats.truncated,
           progress: this.terrain.wanted ? this.terrain.ready / this.terrain.wanted : 0,
           physicsEnabled: this.world.isEnabled && !!this.physics,
           physicsBodies: worldStats.physics?.bodies ?? 0,
@@ -483,6 +517,30 @@ export class Game {
       savedState: saved,
     });
     this.objects.setEnabled(this.objectsEnabled);
+
+    // Phase 8 population: deterministic placement, schedule-driven behaviour and
+    // its own persistence slice. NPCs walk around the static objects the player
+    // can collide with, and share the interaction manager with them.
+    const restoredNpcs = this.npcStore.load(seed);
+    let npcState: PersistedNpcs = {};
+    if (restoredNpcs.status === 'ok') npcState = restoredNpcs.save.npcs;
+    else if (restoredNpcs.status === 'invalid') {
+      console.warn('[Wayfarer] NPC save ignored:', restoredNpcs.reason);
+      this.restoreNotice = `Saved people state was ignored: ${restoredNpcs.reason}`;
+    }
+    this.npcs = new NpcManager({
+      seed,
+      queries: this.queries,
+      events: this.events,
+      interaction: this.interaction,
+      quality: this.quality,
+      terrain: this.terrain,
+      blockers: { blocked: (x, z) => this.objects.blocksWalk(x, z) },
+      time: () => this.sky?.hour ?? CONFIG.sky.initialHour,
+      notify: (message) => { this.ui?.toast(message); },
+      savedState: npcState,
+    });
+    this.npcs.setEnabled(this.npcsEnabled);
   }
 
   /** Swap the whole gameplay layer when the world seed changes. */
@@ -491,9 +549,12 @@ export class Game {
     this.interaction.clear();
     this.propPhysics.clear();
     this.objects.dispose();
+    this.npcs.dispose();
     this.buildGameplayLayer(seed);
-    this.scene.add(this.objects.group);
+    this.scene.add(this.objects.group, this.npcs.group);
     this.ui.syncObjects(this.objects.objectsEnabled);
+    this.ui.syncNpcs(this.npcs.isEnabled);
+    this.ui.setDialogue(null);
     this.ui.setPack(this.inventory.stacks());
     this.ui.setPrompt(null);
   }
@@ -530,9 +591,29 @@ export class Game {
     const result = this.store.save(this.seed, this.objects.serializeState(), this.inventory.stacks());
     this.saveDirty = false;
     this.lastSave = timestamp;
-    if (result.status === 'ok') return;
-    console.warn('[Wayfarer] object save skipped:', result.reason);
-    if (result.status === 'refused') this.ui?.toast(`Save not written: ${result.reason}`);
+    if (result.status !== 'ok') {
+      console.warn('[Wayfarer] object save skipped:', result.reason);
+      if (result.status === 'refused') this.ui?.toast(`Save not written: ${result.reason}`);
+    }
+    if (!this.npcs) return;
+    const npcResult = this.npcStore.save(this.seed, this.npcs.serializeState());
+    if (npcResult.status !== 'ok') {
+      console.warn('[Wayfarer] NPC save skipped:', npcResult.reason);
+      if (npcResult.status === 'refused') this.ui?.toast(`People state not written: ${npcResult.reason}`);
+    }
+  }
+
+  /** Reply to the open conversation (also reachable by clicking the panel). */
+  private selectDialogueTopic(index: number): void {
+    if (!this.npcs.conversationView) return;
+    this.npcs.selectTopic(index);
+    this.ui.setDialogue(this.npcs.conversationView);
+    this.saveDirty = true;
+  }
+
+  private endDialogue(): void {
+    this.npcs.endConversation('player');
+    this.ui.setDialogue(null);
   }
 
   private toggleTour(): void {
@@ -598,6 +679,8 @@ export class Game {
     this.sky.setQuality(quality);
     this.post.setQuality(quality);
     this.objects.setQuality(quality);
+    this.npcs.setQuality(quality);
+    this.ui.syncNpcs(this.npcs.isEnabled);
     this.propPhysics.setCapacity(QUALITY[quality].physicsBodies);
     this.ui.syncPost(this.post.isEnabled);
     this.ui.syncCamera(this.mode, this.character.isFirstPerson);
@@ -659,6 +742,7 @@ export class Game {
     url.searchParams.set('vegetation', this.vegetation.vegetationEnabled ? '1' : '0');
     url.searchParams.set('roads', this.roads.roadsEnabled ? '1' : '0');
     url.searchParams.set('objects', this.objectsEnabled ? '1' : '0');
+    url.searchParams.set('npcs', this.npcsEnabled ? '1' : '0');
     if (this.rig.routeFollowing) { const route = SCENIC_ROUTES.find((r) => r.corridor === this.rig.routeCorridor); if (route) url.searchParams.set('route', route.id); else url.searchParams.delete('route'); } else url.searchParams.delete('route');
     url.searchParams.set('postfx', this.post.isEnabled ? '1' : '0');
     if (this.world.isEnabled) url.searchParams.delete('physics'); else url.searchParams.set('physics', '0');
@@ -706,6 +790,7 @@ export class Game {
       roads: this.roads.stats, world: this.world.stats,
       routeFollowing: this.rig.routeFollowing, route: this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null,
       objects: { ...this.objects.stats, list: this.objects.list() },
+      npcs: { ...this.npcs.stats, list: this.npcs.list(), conversation: this.npcs.conversationView },
       physics: this.propPhysics.stats,
       inventory: { stacks: this.inventory.stacks(), total: this.inventory.total },
       interaction: { targetId: this.interaction.targetId, prompt: this.interaction.currentPrompt, providers: this.interaction.providerCount },
@@ -725,7 +810,7 @@ export class Game {
     this.physicsDebug?.dispose();
     this.physics?.dispose();
     this.character.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
-    this.objects.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
+    this.npcs.dispose(); this.objects.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
     clearObjectGeometryCache();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }

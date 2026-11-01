@@ -3,6 +3,7 @@ import type { QualityName } from '../config';
 import { BIOMES } from '../world/biomes';
 import type { BiomeId } from '../world/biomes';
 import type { InteractionPrompt } from '../interaction/types';
+import type { ConversationView } from '../npc/types';
 import { itemDefinition, isItemId } from '../objects/items';
 import type { ItemId } from '../objects/items';
 
@@ -22,6 +23,10 @@ export interface UIActions {
   vegetation: (enabled: boolean) => void;
   roads: (enabled: boolean) => void;
   objects: (enabled: boolean) => void;
+  /** Phase 8: population toggle and conversation replies. */
+  npcs: (enabled: boolean) => void;
+  dialogueTopic: (index: number) => void;
+  dialogueEnd: () => void;
   route: (id: string) => void;
   wind: (enabled: boolean) => void;
   detail: (enabled: boolean) => void;
@@ -55,6 +60,9 @@ export interface UIStats {
   rigSource: string; rigJoints: number; rigClips: number;
   objects: number; objectBodies: number; objectSleeping: number;
   inventoryItems: number; interactionTarget: string | null;
+  npcActive: number; npcFull: number; npcReduced: number; npcBackground: number;
+  npcRigs: number; npcRigCapacity: number; npcNearest: string | null;
+  npcSearches: number; npcTruncated: boolean;
 }
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id.replace(/^#/, '')) as T;
 
@@ -72,7 +80,7 @@ export function interfaceMarkup(hour: number, backend: BackendName): string {
         <div class="compass" aria-label="Compass"><span>W</span><i></i><span>N</span><i></i><span>E</span><b id="heading">033°</b></div>
         <section class="intro" id="intro"><div class="eyebrow"><span></span> THE INFINITE WORLD PROJECT</div><h1>Take the
 long way home.</h1><p>No finish line. No edge of the map.
-Just you, and what’s over the next ridge.</p><button class="primary" id="explore">Explore the world <span>↗</span></button><div class="phase-note">PHASE 06 <span>·</span> A WORLD YOU CAN TOUCH</div></section>
+Just you, and what’s over the next ridge.</p><button class="primary" id="explore">Explore the world <span>↗</span></button><div class="phase-note">PHASE 08 <span>·</span> A WORLD WITH PEOPLE</div></section>
         <aside class="settings" id="settings" aria-label="World settings" hidden>
           <div class="panel-heading"><div><span class="eyebrow">MAKE IT YOURS</span><h2>World settings</h2></div><button class="icon-button" id="settings-close" aria-label="Close settings">×</button></div>
           <label class="field-label" for="seed">World seed <span>Same seed. Same world.</span></label>
@@ -98,6 +106,9 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <label class="switch-row" for="roads"><span>Road network <kbd>G</kbd><small>Asphalt, markings, signs & overlooks</small></span><input type="checkbox" id="roads" checked role="switch"></label>
           <div class="nature-heading"><span class="eyebrow">THINGS TO TOUCH</span><span>PHASE 06</span></div>
           <label class="switch-row" for="objects"><span>World objects <kbd>O</kbd><small>Caches, lamps, gates, valves & pickups</small></span><input type="checkbox" id="objects" checked role="switch"></label>
+          <label class="switch-row" for="npcs"><span>People <kbd>N</kbd><small>Schedules, pathfinding & conversations</small></span><input type="checkbox" id="npcs" checked role="switch"></label>
+          <div class="nature-heading"><span class="eyebrow">PEOPLE ON THE ROAD</span><span>PHASE 08</span></div>
+          <p class="panel-note">NPCs live on the verges: they follow a daily schedule, pathfind over the real terrain, investigate what they notice and answer questions about what the simulation already knows.</p>
           <div class="pack" id="pack" aria-live="polite"><span class="eyebrow">PACK <b id="pack-count">EMPTY</b></span><ul id="pack-list"></ul></div>
           <label class="switch-row" for="wind"><span>Wind in the canopy<small>Procedural, height-weighted motion</small></span><input type="checkbox" id="wind" checked role="switch"></label>
           <label class="switch-row" for="detail"><span>Terrain surface detail<small>Triplanar grass, rock & snow</small></span><input type="checkbox" id="detail" checked role="switch"></label>
@@ -120,6 +131,12 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <div class="travel"><span class="player-state" id="player-state"><span id="player-mode">ON FOOT</span><i></i><span id="player-stance">STANDING</span></span><button id="tour" aria-pressed="true"><span class="tour-dot"></span><span id="tour-label">Scenic flight</span><span id="tour-state">ON</span></button><div class="clock"><span id="clock">16:24</span><span id="speed">110 M/S CRUISE</span></div></div>
         </footer>
         <div class="reticle" id="reticle" aria-hidden="true">+</div>
+        <div class="dialogue" id="dialogue" role="dialog" aria-label="Conversation" hidden>
+          <div class="dialogue-head"><span class="eyebrow">IN CONVERSATION</span><b id="dialogue-name"></b><button class="dialogue-close" id="dialogue-close" type="button" aria-label="End conversation">×</button></div>
+          <p id="dialogue-line">Choose a reply.</p>
+          <ul id="dialogue-topics"></ul>
+          <span class="dialogue-hint"><kbd>1</kbd>–<kbd>4</kbd> reply · <kbd>Esc</kbd> leave</span>
+        </div>
         <div class="interaction" id="interaction" role="status" aria-live="polite" hidden>
           <span class="interaction-key" id="interaction-key">E</span>
           <div class="interaction-copy"><span class="interaction-target" id="interaction-target"></span><span class="interaction-action" id="interaction-action"></span></div>
@@ -138,6 +155,7 @@ export class Interface {
   private lastUpdate = 0;
   statsVisible = false;
   private promptKey = '';
+  private dialogueKey = '';
   constructor(seed: string, hour: number, quality: QualityName, backend: BackendName, actions: UIActions) {
     $('app').insertAdjacentHTML('beforeend', interfaceMarkup(hour, backend));
     $<HTMLInputElement>('#seed').value = seed;
@@ -163,6 +181,14 @@ export class Interface {
     on('vegetation', 'change', () => actions.vegetation($<HTMLInputElement>('#vegetation').checked));
     on('roads', 'change', () => actions.roads($<HTMLInputElement>('#roads').checked));
     on('objects', 'change', () => actions.objects($<HTMLInputElement>('#objects').checked));
+    on('npcs', 'change', () => actions.npcs($<HTMLInputElement>('#npcs').checked));
+    on('dialogue-close', 'click', () => actions.dialogueEnd());
+    on('dialogue-topics', 'click', (event) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest('button[data-topic]') as HTMLButtonElement | null;
+      if (!button) return;
+      actions.dialogueTopic(Number(button.dataset.topic ?? '0'));
+    });
     on('route-select', 'change', () => { const value = $<HTMLSelectElement>('#route-select').value; if (value) { actions.route(value); $<HTMLSelectElement>('#route-select').value = ''; } });
     on('biome-view', 'change', () => { const value = $<HTMLSelectElement>('#biome-view').value; if (value !== '') { actions.viewpoint(Number(value) as BiomeId); $<HTMLSelectElement>('#biome-view').value = ''; } });
     on('wind', 'change', () => actions.wind($<HTMLInputElement>('#wind').checked));
@@ -217,6 +243,31 @@ export class Interface {
       : '<span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly</span><span><kbd>Q</kbd><kbd>E</kbd> altitude</span><span><kbd>⇧</kbd> boost</span><span><kbd>C</kbd> on foot</span><span>Drag to look</span>';
   }
   syncObjects(enabled: boolean): void { $<HTMLInputElement>('#objects').checked = enabled; }
+  syncNpcs(enabled: boolean): void { $<HTMLInputElement>('#npcs').checked = enabled; }
+
+  /**
+   * Conversation panel. Called every frame, so the DOM is only rebuilt when the
+   * open conversation or its last answer actually changes.
+   */
+  setDialogue(view: ConversationView | null): void {
+    const element = $<HTMLDivElement>('#dialogue');
+    if (!view) {
+      if (!element.hidden) element.hidden = true;
+      this.dialogueKey = '';
+      return;
+    }
+    const key = `${view.npcId}|${view.line ?? 'open'}`;
+    if (key === this.dialogueKey) return;
+    this.dialogueKey = key;
+    element.hidden = false;
+    $('#dialogue-name').textContent = view.npcLabel;
+    $('#dialogue-line').textContent = view.line ?? 'Choose a reply.';
+    if (!view.line) {
+      $('#dialogue-topics').innerHTML = view.topics
+        .map((topic, index) => `<li><button type="button" data-topic="${index}"><kbd>${index + 1}</kbd><span>${topic.label}</span></button></li>`)
+        .join('');
+    }
+  }
 
   /** Interaction prompt; called at 120 Hz, so it only touches the DOM on change. */
   setPrompt(prompt: InteractionPrompt | null): void {
@@ -314,6 +365,10 @@ export class Interface {
       `Objects     ${stats.objects} streamed · ${stats.objectBodies} bodies (${stats.objectSleeping} asleep)`,
       `Inventory   ${stats.inventoryItems} items`,
       `Target      ${stats.interactionTarget ?? '—'}`,
+      `People      ${stats.npcActive} streamed · ${stats.npcFull} full / ${stats.npcReduced} reduced / ${stats.npcBackground} back`,
+      `Rigs        ${stats.npcRigs} / ${stats.npcRigCapacity} skinned NPCs`,
+      `NPC paths   ${stats.npcSearches} searches${stats.npcTruncated ? ' · population budget reached' : ''}`,
+      `Nearest NPC ${stats.npcNearest ?? '—'}`,
       `LOD 0–5     ${stats.lod.join(' · ')}`,
     ].join('\n');
   }

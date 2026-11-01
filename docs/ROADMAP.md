@@ -30,7 +30,7 @@ systems a story will later plug into.
 | **5 — Playable character** ✅ | Capsule character controller on the fixed step, locomotion state machine (walk/jog/sprint/crouch/jump/fall/land), slope and step handling, coyote time and jump buffering, third-person camera with collision avoidance, first-person option, GLTF humanoid + animation blending, swim foundation | 4 |
 | **6 — Objects & interaction** ✅ | Interactable interface (id, prompt, range, predicates, cooldown, persistent state), context-sensitive prompts, doors/containers/switches/pickups, physics props, object persistence. Gamepad + touch input abstraction remain pending | 4, 5 |
 | **7 — Buildings & interiors** | Modular building templates and prefabs, terrain-conforming placement, collision, room graphs, doors, stairs, furniture, interior lighting, indoor/outdoor transitions, interior streaming | 4, 6 |
-| **8 — NPCs & life simulation** | NPC entities, behaviour FSM/behaviour trees, navmesh over streamed terrain, perception (vision cones, LOS, events), schedules, interaction/dialogue hooks, LOD population management, persistence | 4, 5, 7 |
+| **8 — NPCs & life simulation** ✅ | NPC entities, behaviour FSM/behaviour trees, navmesh over streamed terrain, perception (vision cones, LOS, events), schedules, interaction/dialogue hooks, LOD population management, persistence | 4, 5 |
 | **9 — Water & environment** | Lakes/rivers/ocean bodies, water shading with capability fallbacks, buoyancy via multi-point displacement, swimming/diving, splashes and wakes, weather controller (rain/snow/fog/storm) driving light, surface wetness, particles | 4, 5 |
 | **10 — Universal vehicles** | Shared vehicle interface (seats, entry/exit, camera, audio, damage, persistence) with distinct controllers: raycast-suspension road vehicles, motorcycle/bicycle balance, aircraft aerodynamics + helicopters, watercraft buoyancy/propulsion, sailing | 4, 9 |
 | **11 — Discovery & gameplay infrastructure** | World map + minimap from canonical coordinates, route calculation, waypoints, discovery/fog-of-war, save/load with versioned schemas and migration, inventory hooks, generic mission/objective/flag system on the event bus | 4–10 |
@@ -60,6 +60,30 @@ These are load-bearing; changing them requires updating every consumer.
    rendering interpolates.
 8. **No story.** Narrative, dialogue and missions mount on Phase 11 infrastructure;
    they are not part of the engine phases.
+
+## Phase 8 contracts that later phases must honour
+
+These extend the Phase 4 and 6 contracts; all remain in force.
+
+1. **Population is data.** A population is `(seed, canonical cell, slot) → PlacedNpc`
+   with stable ids and home/work/leisure anchors. Authored NPCs register in the same
+   planning path; nothing spawns people ad hoc.
+2. **Motion is intent.** Behaviour nodes call `walkTo` / `stop` / `face` on
+   `NpcAgent`. Only `CharacterMotion` on the fixed step writes NPC positions.
+3. **Brains are replaceable.** `NpcBrain.setBehaviourTree` accepts authored trees;
+   conversation, obstacle, startle and reaction guards stay above them.
+4. **Perception is reusable.** `Perception` answers sight (cone + terrain LOS),
+   hearing, memory and the startle flag from world queries only; missions, vehicles
+   and audio subscribe through the event bus rather than re-deriving visibility.
+5. **Navigation is budgeted.** `NavField` searches are globally rate-limited and
+   expansion-capped, and an unreachable goal returns `null` — never a partial path.
+   `NavigationBlockers` is the seam for buildings and vehicles.
+6. **Interaction is generic.** NPCs implement the Phase 6 `InteractionProvider`
+   with a structural `InteractionArchetype`; do not re-specialise it per content type.
+7. **People persist as a diff.** `NpcStateStore` stores only changed records, keyed by
+   seed, versioned and refused when the format is unknown or newer.
+8. **No story.** Conversations are functional hooks composed from live world data.
+   Narrative, factions and quests mount on Phase 11.
 
 ## Phase 6 contracts that later phases must honour
 

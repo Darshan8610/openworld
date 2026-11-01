@@ -1,10 +1,10 @@
 # Wayfarer — Infinite Open-World Game
 
-**Phases 1–6 combined: a seeded, infinite world you can walk, inspect and touch.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, streamed terrain physics, a playable animated character, interactive world objects with persistent state, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
+**Phases 1–6 and 8 combined: a seeded, infinite world you can walk, inspect, touch and share with other people.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
 
 Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers and Rapier 3D.
 
-> This branch is the merge of the Phase 4 (engine/physics), Phase 5 (playable character) and Phase 6 (objects/interaction) lines. Vehicles, buildings, NPCs, water, audio, missions and the story layer remain later phases — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> This branch merges the Phase 4 (engine/physics), Phase 5 (playable character), Phase 6 (objects/interaction) and Phase 8 (NPCs & life simulation) lines. Buildings/interiors (Phase 7) are being built on a separate line; vehicles, water, audio, missions and the story layer remain later phases — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Quick start
 
@@ -18,7 +18,7 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 181 unit/integration tests across 20 files
+npm test              # 242 unit/integration tests across 25 files
 npm run test:browser  # 23 Playwright browser tests (requires Chromium)
 ```
 
@@ -44,7 +44,7 @@ npx playwright install chromium
 | F | First / third person |
 | Z | Swap shoulder |
 | C | Switch to the survey camera |
-| E | Interact / hold to confirm |
+| E | Interact / hold to confirm / talk |
 | Mouse wheel | Camera zoom |
 
 **Survey camera (inspection)**
@@ -63,10 +63,12 @@ npx playwright install chromium
 
 | Input | Action |
 |---|---|
+| 1–4 | Pick a conversation topic (while talking) |
 | R | Reset viewpoint / return to spawn |
 | P | Pause/resume day cycle |
 | V | Toggle vegetation |
 | O | Toggle interactive world objects |
+| N | Toggle the NPC population |
 | B | Toggle biome overlay |
 | L | Toggle LOD debug colors |
 | H | Hide/show HUD |
@@ -76,7 +78,18 @@ npx playwright install chromium
 
 The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, and a shareable world link.
 
-Share URLs include `seed`, player position, `hour`, `quality`, `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `postfx=0|1`, `physics=0`, `route=cedar|golden|snowline` and an optional `character=<glb-url>`.
+Share URLs include `seed`, player position, `hour`, `quality`, `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `npcs=0|1`, `postfx=0|1`, `physics=0`, `route=cedar|golden|snowline` and an optional `character=<glb-url>`.
+
+## What Phase 8 adds
+
+- **A real population:** NPCs are placed deterministically per 512 m canonical cell (roadside verge and wild country), get home/work/leisure anchors, and stream nearest-first inside a per-preset budget with four simulation levels and a pooled rig cap. Their identity and state survive streaming out and back in.
+- **Navigation over the live world:** a demand-built 4 m walkable grid over the same streamed terrain the player uses, with slope, water and solid-object constraints, a globally budgeted A* (8 searches/s, 1200 expansions), goal snapping that refuses unreachable goals, line-of-sight path smoothing and cross-chunk paths.
+- **Reusable perception:** 110° vision cone, terrain line-of-sight, hearing, decaying memory and a startle flag — enough for curiosity, avoidance and later mission logic.
+- **Data-driven life:** three schedules over four activities with per-NPC phase offsets and an extensible behaviour tree producing 19 real simulated states (idle, walk, wander, run, look, travel, work, sit, eat, rest, sleep, follow, wait, investigate, react, avoid, talk, return, flee). Conversations and startles preempt a walk in progress.
+- **Conversation hooks, not story:** NPCs implement the Phase 6 interaction contract, so the existing prompt/targeting pipeline opens a panel whose answers are composed from live world data (biome, surface, grade, road distance, compass, current activity). No plot, quest or invented dialogue.
+- **Persistence:** a versioned, validated, diff-only per-seed NPC slice that refuses newer or unknown formats instead of overwriting them.
+
+See [docs/PHASE8.md](docs/PHASE8.md) for the placement model, navigation and perception contracts, the full state table, budgets and validation.
 
 ## What Phase 6 adds
 
@@ -153,7 +166,10 @@ src/
                           prop physics world, surface material table (surfaces.ts)
   objects/                object archetypes, placement, actions, items, object system
   interaction/            targeting, prompts, inventory, interaction manager
-  persistence/            versioned object/inventory save store
+  npc/                    roles, deterministic placement, nav grid + A*, perception,
+                          schedules, behaviour trees, dialogue hooks, NPC entity,
+                          two-tier visuals, population manager
+  persistence/            versioned object/inventory/NPC save stores
   world/                  noise, terrain field, biomes, quadtree tiles, worker pool,
                           generator, vegetation field/manager, road network/geometry/manager,
                           viewpoints, sky, world query services
@@ -165,11 +181,11 @@ src/
 tests/                    unit, integration + browser regression tests
 ```
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the open-world plan and the Phase 4/6 contracts later phases must honour, [docs/PHASE6.md](docs/PHASE6.md) for interactive objects and persistence, [docs/PHASE5.md](docs/PHASE5.md) for the playable character, [docs/PHASE4.md](docs/PHASE4.md) for the engine and physics, [docs/PHASE3.md](docs/PHASE3.md) for roads/routes/props, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE1.md](docs/PHASE1.md) for the world foundation.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the open-world plan and the Phase 4/6/8 contracts later phases must honour, [docs/PHASE8.md](docs/PHASE8.md) for the NPC population, navigation, perception and behaviour states, [docs/PHASE6.md](docs/PHASE6.md) for interactive objects and persistence, [docs/PHASE5.md](docs/PHASE5.md) for the playable character, [docs/PHASE4.md](docs/PHASE4.md) for the engine and physics, [docs/PHASE3.md](docs/PHASE3.md) for roads/routes/props, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE1.md](docs/PHASE1.md) for the world foundation.
 
 ## Merge notes
 
-The three phase lines were developed against the same Phase 3 base, so this branch reconciles them explicitly:
+The phase lines were developed against the same Phase 3 base, so this branch reconciles them explicitly:
 
 - **Two physics systems coexist by design.** Rapier (`physics/physics-world.ts`) owns streamed terrain colliders, large bodies and the developer sandbox; `PropPhysicsWorld` (`physics/prop-physics.ts`) owns light interactive props. `WorldManager` steps Rapier, the game loop steps prop physics, both on the same fixed step.
 - **Two query services coexist.** `world/world-query.ts` (`WorldQuery`) answers for the world manager and Rapier ground streamer; `world/world-queries.ts` (`WorldQueries`) answers for objects, interaction and prop physics. Both read the same terrain.
@@ -177,6 +193,8 @@ The three phase lines were developed against the same Phase 3 base, so this bran
 - **Two event buses.** `game/events.ts` (`EventBus`) carries world/physics signals; `core/events.ts` (`GameEventBus`) carries gameplay/object/inventory signals.
 - **One focus, one camera.** The on-foot character drives streaming, the floating origin, the post chain and interaction targeting while walking; the survey rig does so while flying. `C` swaps views without teleporting.
 - **Colliding filenames were split, not overwritten:** `tests/physics.test.ts` (Rapier) vs `tests/prop-physics.test.ts` (props); `tests/entities.test.ts` (world entities) vs `tests/object-entities.test.ts` (object entities).
+- **The interaction contract is structural.** `InteractionProvider.archetype` was `ObjectArchetype`, which made non-object providers impossible; it is now `InteractionArchetype`, so NPCs share the same targeting, prompt and dispatch path as objects without importing object data.
+- **NPC motion is intent-driven.** Behaviour nodes never write positions: they call `walkTo`/`stop`/`face`, and the same `CharacterMotion` solver and fixed 120 Hz step that move the player move the population.
 
 ## Performance notes
 
@@ -186,9 +204,10 @@ The three phase lines were developed against the same Phase 3 base, so this bran
 - Physics runs on a fixed 120 Hz step with a bounded substep count; the ground streamer rebuilds at most four heightfields per update under a 6 ms budget. Rigid bodies are capped (640 bodies / 1280 colliders) and the cap emits an event instead of growing.
 - Entity streaming enforces population budgets per simulation level (24 full / 72 reduced / 320 background) and only ticks reduced-fidelity entities at ~15 Hz.
 - Interactive objects stream in canonical 512 m cells with per-preset budgets (28/56/88/128) and prop body caps (20/40/64/96); prop bodies sleep when settled.
+- NPCs stream in canonical 512 m cells with per-preset population budgets (8/14/20/28) and pooled rig caps (2/4/6/8); full-fidelity NPCs (≤ 95 m) think on the fixed step, reduced (≤ 230 m) at ~15 Hz, background (≤ 640 m) only reschedule. A* is globally capped at 8 searches/second with a 1200-expansion ceiling and a 6000-node cache.
 - Chunk geometry, materials, instance buffers, textures and object geometry caches are disposed on eviction, seed change, quality change, and teardown.
 - The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, instanced batch count, physics bodies/colliders/step time, streamed ground colliders, entity simulation levels, object counts, prop bodies and the interaction target.
-- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The merged branch was verified with `tsc --noEmit`, `npm run build` and 181 unit/integration tests; run `npm run test:browser` on a machine with Chromium for the end-to-end pass.
+- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The merged branch was verified with `tsc --noEmit`, `npm run build` and 242 unit/integration tests across 25 files; run `npm run test:browser` on a machine with Chromium for the end-to-end pass.
 
 ## Assets and licenses
 

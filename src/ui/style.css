@@ -37,3 +37,17 @@ body:not(.mode-survey) #tour:hover{opacity:1}
 .pack li b{color:var(--accent);font-weight:500}
 .pack ul:empty::after{content:'Nothing collected yet.';font-size:10px;color:var(--muted)}
 @media(max-width:600px){.interaction{bottom:26%;padding:9px 13px 11px;gap:9px;min-width:0}.interaction-action{font-size:11px}.interaction-key{min-width:29px;height:23px}.pack ul{font-size:10px}}
+
+/* Phase 8: people on the road — conversation panel. */
+.dialogue{position:absolute;right:44px;bottom:182px;width:min(326px,calc(100vw - 48px));padding:16px 18px 14px;background:rgba(13,26,30,.9);border:1px solid var(--line);border-radius:8px;backdrop-filter:blur(18px);box-shadow:0 18px 46px rgba(4,12,14,.4);pointer-events:auto;animation:interaction-in .18s ease-out}
+.dialogue-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.dialogue-head .eyebrow{font-size:8px;letter-spacing:1.5px;color:var(--accent)}
+.dialogue-head b{font-size:11.5px;font-weight:600;letter-spacing:.2px}
+.dialogue-close{margin-left:auto;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;border:1px solid var(--line);background:#ffffff08;font-size:14px;line-height:1}
+.dialogue-close:hover{background:#ffffff18}
+.dialogue p{margin:0 0 11px;font-size:10.5px;line-height:1.65;color:#dfe8da}
+.dialogue ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.dialogue li button{width:100%;display:flex;align-items:center;gap:9px;padding:8px 10px;background:#ffffff07;border:1px solid #ffffff14;border-radius:5px;font-size:10.5px;text-align:left;transition:background .18s,border-color .18s}
+.dialogue li button:hover{background:#ffffff14;border-color:#ffffff2e}
+.dialogue-hint{display:block;margin-top:11px;font-size:8px;letter-spacing:.6px;color:var(--muted)}
+@media(max-width:600px){.dialogue{right:16px;left:16px;width:auto;bottom:198px}}
