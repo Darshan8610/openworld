@@ -3,8 +3,21 @@ import type { GameEventBus } from '../core/events';
 import type { WorldQueries } from '../world/world-queries';
 import type { PropPhysicsWorld } from '../physics/prop-physics';
 import type { Inventory } from './inventory';
-import type { ObjectArchetype, ObjectState } from '../objects/archetypes';
+import type { ObjectState } from '../objects/archetypes';
 import type { PersistencePolicy } from '../core/entities';
+
+/**
+ * Minimal data identity every interactable exposes.
+ *
+ * Phase 6 defined interaction against world objects; Phase 10 adds vehicles and
+ * later phases add NPCs and buildings. They all need a stable key and a display
+ * label and nothing more, so the interaction layer depends only on this.
+ * `ObjectArchetype` satisfies it structurally — no object code changed.
+ */
+export interface InteractionArchetype {
+  readonly key: string;
+  readonly label: string;
+}
 
 /** The acting entity (survey rig today, the Phase 5 character later). */
 export interface ActorView {
@@ -16,7 +29,7 @@ export interface ActorView {
 
 export interface InteractionContext {
   readonly objectId: string;
-  readonly archetype: ObjectArchetype;
+  readonly archetype: InteractionArchetype;
   readonly state: ObjectState;
   readonly actor: ActorView;
   /** Simulation time in seconds since boot. */
@@ -58,7 +71,7 @@ export interface InteractionAction {
 export interface InteractionProvider {
   readonly id: string;
   /** Data definition that drives the actions and labels. */
-  readonly archetype: ObjectArchetype;
+  readonly archetype: InteractionArchetype;
   /** Canonical centre used for aiming and distance checks. */
   readonly centre: WorldPoint;
   readonly radius: number;
