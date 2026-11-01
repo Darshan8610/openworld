@@ -118,8 +118,13 @@ export class VehicleAudioHooks {
     const rolling = t.grounded > 0 ? clamp01(t.speed / Math.max(4, spec.topSpeed * 0.55)) : 0;
     c.tyre.gain = rolling * t.grounded;
     c.tyre.pitch = 0.7 + rolling * 0.9;
-    // Skid only once the tyre is genuinely past its peak, not merely loaded.
-    c.skid.gain = t.grounded > 0 && t.slip > 0.35 ? clamp01((t.slip - 0.35) / 0.45) * clamp01(t.speed / 6) : 0;
+    // Skid is gated on how fast the contact patch is sliding, not on how fast
+    // the vehicle is going: a burnout from a standstill is loud, and a car
+    // coasting at 30 m/s with the tyres gripping is not.
+    const slide = this.slipSpeed(vehicle);
+    c.skid.gain = t.grounded > 0 && t.slip > 0.35
+      ? clamp01((t.slip - 0.35) / 0.45) * clamp01(slide / 3.5)
+      : 0;
     c.skid.pitch = 0.85 + clamp01(t.slip) * 0.5;
     c.suspension.gain = clamp01(this.suspensionActivity(vehicle) * 2.2);
     c.suspension.pitch = 1;
@@ -165,6 +170,28 @@ export class VehicleAudioHooks {
 
     // Bound the queue: a pathological frame must never grow it without limit.
     if (this.pending.length > 16) this.pending.splice(0, this.pending.length - 16);
+  }
+
+  /**
+   * Mean speed at which the contact patches are sliding over the ground, m/s.
+   * Longitudinal slip comes from the difference between rim speed and road
+   * speed; lateral slip is folded in through the saturation figure.
+   */
+  private slipSpeed(vehicle: Vehicle): number {
+    const wheels = vehicle.controller.wheels;
+    const spec = vehicle.spec.wheels;
+    if (!spec || wheels.length === 0) return vehicle.telemetry.speed;
+    let total = 0;
+    let counted = 0;
+    const road = vehicle.telemetry.forwardSpeed;
+    for (let i = 0; i < wheels.length; i++) {
+      const wheel = wheels[i]!;
+      if (!wheel.grounded) continue;
+      const radius = spec[i]?.radius ?? 0.3;
+      total += Math.abs(wheel.omega * radius - road);
+      counted++;
+    }
+    return counted > 0 ? total / counted : 0;
   }
 
   /**

@@ -136,7 +136,7 @@ export class Vehicle implements InteractionProvider {
     return [{
       id: 'enter',
       label: `Enter ${this.spec.label.toLowerCase()}`,
-      key: 'F',
+      key: 'Q',
       available: () => this.seatOccupant(driverSeat.id) === null && this.health > 0,
       run: () => ({ message: `Entered the ${this.spec.label.toLowerCase()}` }),
     }];

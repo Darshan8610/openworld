@@ -18,6 +18,11 @@ import type { VehicleGroundSample } from './types';
 export const VEHICLE_VIEWS = ['chase', 'hood', 'cockpit', 'first-person', 'orbit', 'cinematic'] as const;
 export type VehicleView = (typeof VEHICLE_VIEWS)[number];
 
+/**
+ * The vectors in a pose are owned and reused by the camera, so a pose is only
+ * valid until the next `update`. Copy out anything that must outlive the call;
+ * reusing them keeps the render loop allocation-free.
+ */
 export interface VehicleCameraPose {
   readonly eye: Vector3;
   readonly target: Vector3;

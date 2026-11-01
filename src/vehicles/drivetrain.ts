@@ -22,6 +22,9 @@ export interface DrivetrainState {
 
 const SHIFT_TIME = 0.22;
 
+/** Fraction of `maxRpm` at which the soft limiter starts cutting fuel. */
+const LIMITER_BAND = 0.985;
+
 /**
  * Normalised torque fraction at a crank speed. A broad plateau around the
  * torque peak with a falloff toward idle and the limiter — characteristic of a
@@ -123,8 +126,12 @@ export class Drivetrain {
     }
 
     const available = spec.peakTorque * torqueFraction(this.state.rpm, spec);
-    // Over the limiter the ECU cuts fuel; below idle the engine is still pulling.
-    const limited = this.state.rpm >= spec.maxRpm || !input.ignition ? 0 : available;
+    // The ECU cuts fuel in a band *below* the hard limit, exactly as a real
+    // soft limiter does. Testing against `maxRpm` alone never fires, because
+    // the crank only approaches it asymptotically — which let a wheel spinning
+    // on ice accelerate without bound.
+    const onLimiter = this.state.rpm >= spec.maxRpm * LIMITER_BAND;
+    const limited = onLimiter || !input.ignition ? 0 : available;
     const drive = limited * throttle;
     // Engine braking: a closed throttle drags on the driveline, and a dead
     // engine being turned over by the wheels drags hardest of all.

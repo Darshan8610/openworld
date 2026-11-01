@@ -37,6 +37,11 @@ import type { GroundContact } from '../physics/rigid-body';
 import { Inventory } from '../interaction/inventory';
 import { InteractionManager } from '../interaction/manager';
 import { ObjectSystem } from '../objects/object-system';
+import { VehicleSystem } from '../vehicles/vehicle-system';
+import { VehicleCamera } from '../vehicles/vehicle-camera';
+import { VehicleInputMapper } from '../vehicles/vehicle-input';
+import { VehicleStateStore } from '../persistence/vehicle-store';
+import type { Vehicle } from '../vehicles/vehicle';
 import { ObjectStateStore } from '../persistence/object-store';
 import type { PersistedObjects } from '../persistence/object-store';
 import type { ItemStack } from '../objects/items';
@@ -92,6 +97,15 @@ export class Game {
   private interaction!: InteractionManager;
   private objects!: ObjectSystem;
   private objectsEnabled = true;
+  private vehicles!: VehicleSystem;
+  private readonly vehicleCamera = new VehicleCamera();
+  private readonly vehicleInput = new VehicleInputMapper();
+  private readonly vehicleStore = new VehicleStateStore();
+  private readonly vehicleEye = new Vector3();
+  private readonly vehicleTarget = new Vector3();
+  private readonly vehicleLocal = new Vector3();
+  /** Set while the player is driving; cleared on exit. */
+  private driving: Vehicle | undefined;
   private interactPressed = false;
   private saveDirty = false;
   private lastSave = 0;
@@ -142,7 +156,7 @@ export class Game {
     const postParam = new URLSearchParams(location.search).get('postfx');
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
-    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group);
+    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group, this.vehicles.root);
     this.world = new WorldManager({
       origin: this.origin, terrain: this.terrain, vegetation: this.vegetation, roads: this.roads, events: this.worldEvents,
     });
@@ -152,6 +166,7 @@ export class Game {
       this.vegetation.rebase();
       this.roads.rebase(delta);
       this.objects.rebase(this.origin.absolute);
+      this.vehicles.rebase(this.origin.absolute);
       this.events.emit('world:originRebased', {
         x: this.origin.absolute.x, y: this.origin.absolute.y, z: this.origin.absolute.z, shifts: this.origin.shifts,
       });
@@ -217,6 +232,13 @@ export class Game {
       if (code === 'KeyC') this.setMode(this.mode === 'character' ? 'survey' : 'character');
       if (code === 'KeyF') { this.character.toggleFirstPerson(); this.ui.syncCamera(this.mode, this.character.isFirstPerson); }
       if (code === 'KeyZ') this.character.toggleShoulder();
+      // Phase 10: Q enters/leaves a vehicle, Y cycles the vehicle camera.
+      if (code === 'KeyQ') { this.toggleVehicle(); this.ui.dismissIntro(); }
+      if (code === 'KeyY' && this.driving) {
+        const view = this.vehicleCamera.cycle();
+        this.events.emit('vehicle:viewChanged', { id: this.driving.id, view });
+        this.ui.toast(`Camera: ${view}`);
+      }
     };
     window.addEventListener('resize', () => { resizeRenderer(this.context, this.quality); this.rig.resize(); this.character.resize(); }, { signal: this.abort.signal });
     document.addEventListener('visibilitychange', () => { this.loop.reset(); this.input.clear(); }, { signal: this.abort.signal });
@@ -298,7 +320,10 @@ export class Game {
 
   /** Canonical world position the streaming systems follow. */
   private resolveActivePosition(): Vector3 {
-    if (this.mode === 'character' && this.character.ready) this.activePosition.copy(this.character.position);
+    // Streaming, origin rebasing and the sky all follow whatever the player is
+    // actually travelling in, so a fast vehicle pulls the world along with it.
+    if (this.driving) this.activePosition.copy(this.driving.body.position);
+    else if (this.mode === 'character' && this.character.ready) this.activePosition.copy(this.character.position);
     else this.activePosition.copy(this.rig.position);
     return this.activePosition;
   }
@@ -314,8 +339,13 @@ export class Game {
     try {
       this.loop.tick(timestamp, (dt) => {
         if (!this.ready) return;
-        if (this.mode === 'character') this.character.fixedUpdate(dt);
+        if (this.driving) {
+          // Control handover: the character is parked while driving, and the
+          // vehicle is stepped on the same fixed step as everything else.
+          this.vehicleInput.apply(this.input, this.driving.spec.vehicleClass, dt, this.driving.controls);
+        } else if (this.mode === 'character') this.character.fixedUpdate(dt);
         else this.rig.fixedUpdate(dt);
+        this.vehicles.fixedUpdate(dt, this.resolveActivePosition());
         this.propPhysics.step(dt, this.groundSample);
         this.updateInteraction(dt);
       }, (alpha, dt) => {
@@ -349,6 +379,8 @@ export class Game {
         }
         this.renderActive(this.ready ? alpha : 1, dt);
         this.objects.update(dt, focus, this.origin.absolute, alpha);
+        this.vehicles.update(dt, focus, this.origin.absolute, alpha);
+        this.updateVehicleCamera(dt, this.ready ? alpha : 1);
         this.origin.toLocal(focus, this.localPosition);
         if (this.ready) this.sky.update(dt, this.localPosition, this.activeCamera);
         const fog = this.scene.fog as Fog;
@@ -483,6 +515,77 @@ export class Game {
       savedState: saved,
     });
     this.objects.setEnabled(this.objectsEnabled);
+
+    // Vehicles stream alongside objects but keep their own budget and store:
+    // a 6-DOF body with per-wheel raycasts costs far more than a static prop.
+    const vehicleSave = this.vehicleStore.load(seed);
+    if (vehicleSave.status === 'invalid') {
+      console.warn('[Wayfarer] vehicle save ignored:', vehicleSave.reason);
+    }
+    this.vehicles = new VehicleSystem({
+      seed,
+      queries: this.queries,
+      events: this.events,
+      interaction: this.interaction,
+      ...(vehicleSave.status === 'ok' ? { savedState: vehicleSave.save.vehicles } : {}),
+    });
+    this.events.on('vehicle:damaged', () => { this.saveDirty = true; });
+    this.events.on('vehicle:exited', () => { this.saveDirty = true; });
+  }
+
+  // ---- Vehicles --------------------------------------------------------------
+
+  /** True while the player is driving rather than on foot. */
+  get isDriving(): boolean { return this.driving !== undefined; }
+
+  /**
+   * Enter the nearest vehicle, or leave the current one. Control handover is
+   * explicit: the character is parked and hidden, input is routed to the
+   * vehicle, and the camera swaps to the vehicle rig.
+   */
+  private toggleVehicle(): void {
+    if (this.driving) { this.leaveVehicle(); return; }
+    if (this.mode !== 'character' || !this.character.ready) return;
+    const target = this.vehicles.nearestEnterable(this.character.position);
+    if (!target) { this.ui.toast('No vehicle within reach'); return; }
+    const seat = this.vehicles.enter(target.id, 'player');
+    if (!seat) { this.ui.toast(`${target.spec.label} is occupied`); return; }
+    this.driving = target;
+    this.character.active = false;
+    this.vehicleInput.reset();
+    this.vehicleCamera.reset();
+    this.ui.toast(`${target.spec.label} · Q to exit, Y for camera`);
+    this.ui.setPrompt(null);
+  }
+
+  private leaveVehicle(): void {
+    const vehicle = this.driving;
+    if (!vehicle) return;
+    const point = this.vehicles.exit(vehicle.id, 'player');
+    this.driving = undefined;
+    vehicle.controls.throttle = 0;
+    vehicle.controls.brake = 1;
+    this.character.active = true;
+    if (point) this.character.spawnAt(point.x, point.z);
+    this.vehicleInput.reset();
+    this.saveDirty = true;
+    this.ui.toast(`Left the ${vehicle.spec.label.toLowerCase()}`);
+  }
+
+  /** Drive the camera from the vehicle rig and return its canonical eye point. */
+  private updateVehicleCamera(dt: number, alpha: number): void {
+    const vehicle = this.driving;
+    if (!vehicle) return;
+    const pose = this.vehicleCamera.update(dt, vehicle, alpha, this.vehicles.environment);
+    this.vehicleEye.copy(pose.eye);
+    this.vehicleTarget.copy(pose.target);
+    const camera = this.character.camera;
+    this.origin.toLocal(this.vehicleEye, this.vehicleLocal);
+    camera.position.copy(this.vehicleLocal);
+    this.origin.toLocal(this.vehicleTarget, this.vehicleLocal);
+    camera.up.set(Math.sin(pose.roll), Math.cos(pose.roll), 0);
+    camera.lookAt(this.vehicleLocal);
+    if (camera.fov !== pose.fov) { camera.fov = pose.fov; camera.updateProjectionMatrix(); }
   }
 
   /** Swap the whole gameplay layer when the world seed changes. */
@@ -490,9 +593,12 @@ export class Game {
     this.saveDirty = false;
     this.interaction.clear();
     this.propPhysics.clear();
+    this.leaveVehicle();
     this.objects.dispose();
+    this.vehicles.dispose();
+    this.scene.remove(this.vehicles.root);
     this.buildGameplayLayer(seed);
-    this.scene.add(this.objects.group);
+    this.scene.add(this.objects.group, this.vehicles.root);
     this.ui.syncObjects(this.objects.objectsEnabled);
     this.ui.setPack(this.inventory.stacks());
     this.ui.setPrompt(null);
@@ -530,6 +636,12 @@ export class Game {
     const result = this.store.save(this.seed, this.objects.serializeState(), this.inventory.stacks());
     this.saveDirty = false;
     this.lastSave = timestamp;
+    // Vehicles are a separate versioned slice, so a refused object save never
+    // costs the player the car they parked.
+    if (this.vehicles) {
+      const vehicleResult = this.vehicleStore.save(this.seed, this.vehicles.persistedState());
+      if (vehicleResult.status !== 'ok') console.warn('[Wayfarer] vehicle save skipped:', vehicleResult.reason);
+    }
     if (result.status === 'ok') return;
     console.warn('[Wayfarer] object save skipped:', result.reason);
     if (result.status === 'refused') this.ui?.toast(`Save not written: ${result.reason}`);
@@ -725,7 +837,7 @@ export class Game {
     this.physicsDebug?.dispose();
     this.physics?.dispose();
     this.character.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
-    this.objects.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
+    this.objects.dispose(); this.vehicles.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
     clearObjectGeometryCache();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }

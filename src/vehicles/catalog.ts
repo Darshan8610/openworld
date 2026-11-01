@@ -425,7 +425,9 @@ export const VEHICLE_CATALOG: readonly VehicleSpec[] = [
     key: 'drone', label: 'Survey Quadrotor', category: 'Drone', vehicleClass: 'helicopter', domain: 'air',
     body: 'drone', mass: 18, dimensions: { length: 0.9, width: 0.9, height: 0.3 },
     centreOfMass: { x: 0, y: 0, z: 0 }, inertiaScale: 0.7,
-    seats: [], maxHealth: 12, fuelCapacity: 20, fuelBurn: 0.02, topSpeed: 24, accent: 0x23282c,
+    // A seat here is a *control position*, not a chair: the drone is remote
+    // piloted, so taking control uses the same entry path as climbing in.
+    seats: [seat('operator', 'driver', 0, 0, 0, 1.1)], maxHealth: 12, fuelCapacity: 20, fuelBurn: 0.02, topSpeed: 24, accent: 0x23282c,
     wheels: skids(0.3, 18),
     rotor: { ...ROTOR({ mass: 18, hub: 0.14, thrustRatio: 2.6 }), spoolTime: 0.3, angularDamping: 2.4, dragArea: 0.2, verticalDragArea: 0.55, groundEffectHeight: 1.4 },
     spawn: { terrain: 'open', weight: 0.25, maxSlope: 0.3 },

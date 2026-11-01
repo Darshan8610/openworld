@@ -317,7 +317,15 @@ export class WheeledController implements VehicleController {
 
       // Reaction: the ground's push on the tyre spins the wheel the other way,
       // against the same effective inertia the drive torque saw.
+      const before = wheel.omega;
       wheel.omega -= (forces.longitudinal * s.radius / wheel.effectiveInertia) * dt;
+      // The reaction alone must never push the wheel *past* the speed at which
+      // it would roll without slipping — crossing it is integration overshoot,
+      // not physics, and an explicit step makes undriven wheels ring at a few
+      // rad/s either side of the correct answer. Projecting onto the no-slip
+      // solution is the standard semi-implicit fix.
+      const freeRolling = longitudinalSpeed / s.radius;
+      if ((before - freeRolling) * (wheel.omega - freeRolling) < 0) wheel.omega = freeRolling;
       wheel.spin += wheel.omega * dt;
     }
   }
@@ -361,7 +369,10 @@ export class WheeledController implements VehicleController {
     let bestLoad = -1;
     for (const wheel of this.wheels) {
       if (wheel.grounded) grounded++;
-      slip += Math.min(1, wheel.slip);
+      // The *worst* tyre, not the average. Slip drives skid audio and tyre
+      // smoke, and one wheel lit up is both audible and visible; averaging it
+      // against three gripping tyres hides exactly the event we care about.
+      slip = Math.max(slip, Math.min(1, wheel.slip));
       load += wheel.load;
       if (wheel.grounded && wheel.load > bestLoad) { bestLoad = wheel.load; dominant = wheel.surface; }
     }
@@ -373,7 +384,7 @@ export class WheeledController implements VehicleController {
     telemetry.gear = this.drivetrain.state.gear;
     telemetry.load = this.drivetrain.state.load;
     telemetry.grounded = this.wheels.length > 0 ? grounded / this.wheels.length : 0;
-    telemetry.slip = this.wheels.length > 0 ? slip / this.wheels.length : 0;
+    telemetry.slip = slip;
     telemetry.surface = dominant;
     telemetry.verticalSpeed = body.velocity.y;
     telemetry.altitude = body.position.y - this.ground.height;

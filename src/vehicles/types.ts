@@ -388,7 +388,7 @@ export interface VehicleTelemetry {
   load: number;
   /** Fraction of wheels touching the ground. */
   grounded: number;
-  /** Mean |slip| across the tyres, 0..1 — drives skid audio and smoke. */
+  /** Worst tyre saturation, 0..1 — drives skid audio and tyre smoke. */
   slip: number;
   /** Dominant surface under the contact patches. */
   surface: SurfaceKind;
