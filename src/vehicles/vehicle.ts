@@ -144,11 +144,28 @@ export class Vehicle implements InteractionProvider {
 
   // ---- Seats ----------------------------------------------------------------
 
-  get driverSeatId(): string | undefined { return this.spec.seats.find((seat) => seat.role === 'driver')?.id; }
+  get driverSeatId(): string | undefined { return this.driverSeat?.id; }
+  /** True if the named seat is the driving position. */
+  isDriverSeat(seatId: string): boolean {
+    return this.spec.seats.some((seat) => seat.id === seatId && seat.role === 'driver');
+  }
+  /** First unoccupied seat, preferring the driving position. */
+  freeSeat(): string | undefined {
+    const driver = this.seats.find((slot) => slot.seat.role === 'driver' && slot.occupantId === null);
+    if (driver) return driver.seat.id;
+    return this.seats.find((slot) => slot.occupantId === null)?.seat.id;
+  }
+  /** The driving position, used by the cockpit camera and control handover. */
+  get driverSeat(): SeatSpec | undefined { return this.spec.seats.find((seat) => seat.role === 'driver'); }
   get occupiedSeats(): number { return this.seats.reduce((count, slot) => count + (slot.occupantId ? 1 : 0), 0); }
   get hasDriver(): boolean {
     const driver = this.driverSeatId;
     return driver !== undefined && this.seatOccupant(driver) !== null;
+  }
+
+  /** Which seat an actor is in, if any. */
+  seatOf(occupantId: string): string | undefined {
+    return this.seats.find((slot) => slot.occupantId === occupantId)?.seat.id;
   }
 
   seatOccupant(seatId: string): string | null {

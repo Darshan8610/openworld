@@ -70,6 +70,29 @@ export const CONFIG = {
   },
   origin: { rebaseDistance: 2048 },
   /**
+   * Vehicles. Budgets are deliberately far below the object budget: a vehicle
+   * carries a full 6-DOF body plus per-wheel raycasts, so a handful simulated
+   * at full rate costs more than a hundred static props.
+   */
+  vehicles: {
+    /** Streaming tick, seconds. */
+    updateInterval: 0.4,
+    /** Canonical placement cell edge, metres. Wider than objects: vehicles are sparse. */
+    cellSize: 1024,
+    /** Cells loaded around the player (1 = 3×3). */
+    loadRadius: 1,
+    /** Hard cap on simultaneously streamed vehicles. */
+    budget: 24,
+    /** Vehicles stepped at the full fixed rate; the rest idle until approached. */
+    activeBudget: 6,
+    /** Radius within which a parked vehicle is simulated rather than frozen, metres. */
+    simulateRadius: 260,
+    /** Reach for the enter prompt, metres. */
+    enterRange: 4.2,
+    /** Minimum gap between two planned vehicles, metres. */
+    spacing: 14,
+  },
+  /**
    * Playable character. Metres and seconds: speeds in m/s, gravity in m/s²,
    * distances in metres, angles in degrees where named `…Deg`.
    */

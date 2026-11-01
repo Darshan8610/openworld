@@ -19,6 +19,13 @@ export interface GameEventMap {
   'player:exitedBuilding': { id: string };
   'player:seated': { objectId: string };
   'player:stood': { objectId: string };
+  'vehicle:spawned': { id: string; key: string; vehicleClass: string };
+  'vehicle:despawned': { id: string };
+  'vehicle:entered': { id: string; key: string; seat: string; actor: string };
+  'vehicle:exited': { id: string; key: string; seat: string; actor: string; x: number; y: number; z: number };
+  'vehicle:damaged': { id: string; key: string; severity: number; health: number; wrecked: boolean };
+  'vehicle:recovered': { id: string; key: string };
+  'vehicle:viewChanged': { id: string; view: string };
   'world:originRebased': { x: number; y: number; z: number; shifts: number };
   'world:objectsReset': { seed: string };
   'physics:bodySlept': { id: string };
