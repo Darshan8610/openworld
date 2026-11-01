@@ -1,3 +1,6 @@
+import { Discovery } from '../discovery/discovery';
+import { DiscoveryPanel } from '../ui/discovery-panel';
+import { GameSaveStore } from '../persistence/game-save';
 import { Scene, Fog, Vector3 } from 'three/webgpu';
 import type { PerspectiveCamera } from 'three/webgpu';
 import { CONFIG, QUALITY } from '../config';
@@ -37,11 +40,26 @@ import type { GroundContact } from '../physics/rigid-body';
 import { Inventory } from '../interaction/inventory';
 import { InteractionManager } from '../interaction/manager';
 import { ObjectSystem } from '../objects/object-system';
+import { VehicleSystem } from '../vehicles/vehicle-system';
+import { VehicleCamera } from '../vehicles/vehicle-camera';
+import { VehicleInputMapper } from '../vehicles/vehicle-input';
+import { VehicleStateStore } from '../persistence/vehicle-store';
+import type { Vehicle } from '../vehicles/vehicle';
 import { ObjectStateStore } from '../persistence/object-store';
 import type { PersistedObjects } from '../persistence/object-store';
+import { NpcManager } from '../npc/npc-manager';
+import { NpcStateStore } from '../persistence/npc-store';
+import type { PersistedNpcs } from '../npc/types';
 import type { ItemStack } from '../objects/items';
 import { clearObjectGeometryCache } from '../rendering/object-geometry';
 import type { ActorView } from '../interaction/types';
+import { WebAudioEngine } from '../audio/engine';
+import { AudioDirector } from '../audio/director';
+import type { AudioFrame } from '../audio/director';
+import { dominantZone } from '../audio/zones';
+import { CaptionFeed } from '../ui/captions';
+import { applyPreferences, loadPreferences, savePreferences, prefersReducedMotion } from '../ui/preferences';
+import type { AccessibilityPreferences, Preferences } from '../ui/preferences';
 
 /** Actor state the rig updates every fixed step; structurally an `ActorView`. */
 interface MutableActor extends ActorView {
@@ -49,9 +67,15 @@ interface MutableActor extends ActorView {
   forward: WorldPoint;
   yaw: number;
 }
+import { BuildingManager } from '../world/buildings/manager';
+import { BuildingExperience } from '../world/buildings/experience';
+import { TerrainField } from '../world/terrain-field';
+import type { BuildingStorage } from '../world/buildings/state';
 
 /** Composition root: subsystem ownership and lifecycle are explicit. */
 export class Game {
+  private readonly discovery = new Discovery();
+  private readonly discoveryPanel: DiscoveryPanel;
   private readonly scene = new Scene();
   private readonly origin = new FloatingOrigin();
   private readonly loop = new FixedLoop();
@@ -60,6 +84,8 @@ export class Game {
   private readonly terrain: TerrainManager;
   private readonly vegetation: VegetationManager;
   private readonly roads: RoadManager;
+  private readonly buildings: BuildingManager;
+  private readonly buildingExperience: BuildingExperience;
   private readonly rig: SurveyCamera;
   private readonly character: CharacterSystem;
   private readonly sky: SkySystem;
@@ -92,6 +118,29 @@ export class Game {
   private interaction!: InteractionManager;
   private objects!: ObjectSystem;
   private objectsEnabled = true;
+  /** Phase 8: streamed NPC population sharing the world queries and interaction. */
+  private npcs!: NpcManager;
+  private readonly npcStore = new NpcStateStore();
+  private npcsEnabled = true;
+  /** Phase 12: local preferences (audio mix + accessibility) and audio runtime. */
+  private preferences: Preferences = loadPreferences();
+  private audio!: WebAudioEngine;
+  private audioDirector!: AudioDirector;
+  private readonly captions = new CaptionFeed();
+  private captionClock = 0;
+  private paused = false;
+  /** Day-cycle/tour state saved when reduced motion is switched on. */
+  private motionRestore: { cycling: boolean; touring: boolean } | null = null;
+  private audioUnlockBound = false;
+  private vehicles!: VehicleSystem;
+  private readonly vehicleCamera = new VehicleCamera();
+  private readonly vehicleInput = new VehicleInputMapper();
+  private readonly vehicleStore = new VehicleStateStore();
+  private readonly vehicleEye = new Vector3();
+  private readonly vehicleTarget = new Vector3();
+  private readonly vehicleLocal = new Vector3();
+  /** Set while the player is driving; cleared on exit. */
+  private driving: Vehicle | undefined;
   private interactPressed = false;
   private saveDirty = false;
   private lastSave = 0;
@@ -111,17 +160,27 @@ export class Game {
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     this.context = context; this.seed = seed; this.quality = quality;
-    this.scene.name = 'Wayfarer / Phase 5';
+    this.scene.name = 'Wayfarer / integrated Phases 1–8, 10–12';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
+    // Preferences are local and known before anything else runs, so the first
+    // frame already respects reduced motion, contrast and the interaction mode.
+    if (prefersReducedMotion() && !this.preferences.accessibility.reducedMotion) {
+      this.preferences = {
+        ...this.preferences,
+        accessibility: { ...this.preferences.accessibility, reducedMotion: true },
+      };
+    }
+    applyPreferences(this.preferences, document.documentElement);
     this.terrain = new TerrainManager(this.origin, seed, quality, (error) => this.fail(error));
     this.vegetation = new VegetationManager(this.terrain, this.origin, quality);
     this.roads = new RoadManager(this.terrain, this.origin, quality, seed);
     if (new URLSearchParams(location.search).get('roads') === '0') this.roads.setEnabled(false);
     if (new URLSearchParams(location.search).get('vegetation') === '0') this.vegetation.setEnabled(false);
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) this.vegetation.setWind(false);
+    if (this.preferences.accessibility.reducedMotion) this.vegetation.setWind(false);
     this.buildGameplayLayer(seed);
     if (new URLSearchParams(location.search).get('objects') === '0') { this.objectsEnabled = false; this.objects.setEnabled(false); }
+    if (new URLSearchParams(location.search).get('npcs') === '0') { this.npcsEnabled = false; this.npcs.setEnabled(false); }
     this.rig = new SurveyCamera(this.input, this.origin, this.terrain, this.roads);
     this.rig.position.copy(position); this.rig.previous.copy(position); this.rig.home.copy(position);
     this.origin.update(position);
@@ -136,13 +195,20 @@ export class Game {
       reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
     });
     this.character.spawnAt(position.x, position.z);
+    let buildingStorage: BuildingStorage | undefined;
+    try { buildingStorage = window.localStorage; } catch (error) { console.warn('[Buildings] Browser storage unavailable; door state is session-only.', error); }
+    this.buildings = new BuildingManager({
+      seed, quality, origin: this.origin, terrain: this.terrain, storage: buildingStorage,
+      onReservationsChanged: () => this.vegetation.invalidateReservations(),
+    });
+    this.vegetation.setReservationQuery((x, z) => this.buildings.field.isAuthoredReserved(x, z));
     this.sky = new SkySystem(context.renderer, this.scene, seed, quality);
     this.sky.setHour(hour);
     this.post = new PostProcessing(context.renderer, this.scene, this.character.camera, quality);
     const postParam = new URLSearchParams(location.search).get('postfx');
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
-    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group);
+    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group, this.npcs.group, this.vehicles.root, this.buildings.group);
     this.world = new WorldManager({
       origin: this.origin, terrain: this.terrain, vegetation: this.vegetation, roads: this.roads, events: this.worldEvents,
     });
@@ -152,9 +218,25 @@ export class Game {
       this.vegetation.rebase();
       this.roads.rebase(delta);
       this.objects.rebase(this.origin.absolute);
+      this.npcs.rebase(this.origin.absolute);
+      this.vehicles.rebase(this.origin.absolute);
+      this.buildings.rebase();
       this.events.emit('world:originRebased', {
         x: this.origin.absolute.x, y: this.origin.absolute.y, z: this.origin.absolute.z, shifts: this.origin.shifts,
       });
+    });
+    // Phase 12: procedural audio. No files, no downloads; if Web Audio is
+    // missing the engine is a safe no-op and the panel says so.
+    this.audio = new WebAudioEngine({ beds: true });
+    this.audioDirector = new AudioDirector({
+      engine: this.audio,
+      settings: this.preferences.audio,
+      events: this.events,
+      locate: (id) => this.locateSoundSource(id),
+      onCaption: (text, pan) => {
+        this.captions.push(text, this.captionClock, pan);
+        this.ui?.setCaptions(this.captions.list(this.captionClock));
+      },
     });
     this.ui = new Interface(seed, hour, quality, context.backend, {
       seed: (value) => this.changeSeed(normalizeSeed(value)),
@@ -165,13 +247,16 @@ export class Game {
       quality: (value) => this.setQuality(value),
       tour: () => { this.toggleTour(); this.ui.dismissIntro(); },
       reset: () => { this.respawnPlayer(); this.ui.dismissIntro(); },
-      lock: () => { void this.input.lock(); },
+      lock: () => { void this.input.lock(); void this.audio.resume(); },
       debug: (value) => { this.terrain.setDebug(value); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); },
       wireframe: (value) => this.terrain.setWireframe(value),
       biomeDebug: (value) => { this.terrain.setBiomeDebug(value); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); },
       vegetation: (value) => { this.vegetation.setEnabled(value); this.updateURL(); },
       roads: (value) => { this.roads.setEnabled(value); this.updateURL(); },
       objects: (value) => { this.objectsEnabled = value; this.objects.setEnabled(value); this.updateURL(); },
+      npcs: (value) => { this.npcsEnabled = value; this.npcs.setEnabled(value); this.updateURL(); },
+      dialogueTopic: (index) => this.selectDialogueTopic(index),
+      dialogueEnd: () => this.endDialogue(),
       route: (value) => this.travelRoute(value),
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
@@ -186,25 +271,73 @@ export class Game {
       sensitivity: (value) => this.character.setSensitivity(value),
       shoulder: () => this.character.toggleShoulder(),
       respawn: () => this.respawnPlayer(),
+      volume: (bus, value) => this.setVolume(bus, value),
+      mute: (muted) => this.setMuted(muted),
+      captions: (enabled) => this.setCaptionsEnabled(enabled),
+      accessibility: (key, value) => this.setAccessibility(key, value),
+      restart: () => location.reload(),
+      title: () => location.reload(),
+      uiSound: (sound) => this.audioDirector.ui(sound),
     });
+    this.buildingExperience = new BuildingExperience(this.buildings, this.rig, this.terrain, { loading: () => { this.ui.enterWorld(); this.setMode('survey'); this.beginLoading(); }, changed: () => this.updateURL(), toast: (message) => this.ui.toast(message) });
     this.ui.syncTime(hour, this.sky.cycling);
     this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
     this.ui.syncPost(this.post.isEnabled);
     this.ui.setPhysicsAvailable(false);
     this.ui.syncCamera(this.mode, this.character.isFirstPerson);
     this.ui.syncObjects(this.objects.objectsEnabled);
+    this.ui.syncNpcs(this.npcs.isEnabled);
+    this.ui.syncAudio(this.preferences.audio);
+    this.ui.syncPreferences(this.preferences.accessibility);
+    this.ui.setAudioStatus(this.audio.available ? 'SYNTHESISED · WEB AUDIO' : 'AUDIO UNAVAILABLE');
+    this.ui.onOverlayChange = (overlay) => this.handleOverlay(overlay);
+    // The interface boots on the title screen before this callback exists.
+    this.handleOverlay(this.ui.overlay);
+    this.interaction.setHoldToConfirm(this.preferences.accessibility.interactionHold);
+    this.bindAudioUnlock();
     this.ui.setPack(this.inventory.stacks());
     this.events.on('inventory:changed', ({ items }) => this.ui.setPack(items));
     this.events.on('object:stateChanged', () => { this.saveDirty = true; });
+    this.events.on('vehicle:damaged', () => { this.saveDirty = true; });
+    this.events.on('vehicle:exited', () => { this.saveDirty = true; });
+    this.events.on('vehicle:entered', ({ id, actor }) => {
+      if (actor !== 'player') return;
+      const vehicle = this.vehicles.driven;
+      if (!vehicle || vehicle.id !== id) return;
+      this.driving = vehicle;
+      this.character.active = false;
+      this.vehicleInput.reset(); this.vehicleCamera.reset();
+    });
+    this.events.on('npc:talkStarted', () => { this.saveDirty = true; });
+    this.events.on('npc:talkEnded', () => { this.ui?.setDialogue(null); });
     this.events.on('inventory:changed', () => { this.saveDirty = true; });
     if (this.restoreNotice) this.ui.toast(this.restoreNotice);
+    this.discoveryPanel = new DiscoveryPanel(this.discovery, () => this.queries, slot => this.saveGame(slot), slot => this.loadGame(slot));
     this.input.onShortcut = (code) => {
+      if (this.discoveryPanel.isOpen || this.ui.overlay !== 'none') return;
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
       if (code === 'KeyH') this.ui.toggleHUD();
       if (code === 'KeyL') { this.terrain.setDebug(!this.terrain.debug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
       if (code === 'KeyB') { this.terrain.setBiomeDebug(!this.terrain.biomeDebug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
       if (code === 'KeyE') this.interactPressed = true;
       if (code === 'KeyO') { this.objectsEnabled = !this.objectsEnabled; this.objects.setEnabled(this.objectsEnabled); this.ui.syncObjects(this.objectsEnabled); this.updateURL(); }
+      if (code === 'KeyN') {
+        this.npcsEnabled = !this.npcsEnabled;
+        this.npcs.setEnabled(this.npcsEnabled);
+        this.ui.syncNpcs(this.npcsEnabled);
+        this.updateURL();
+        this.ui.toast(this.npcsEnabled ? 'People return to the world' : 'People hidden — the world still streams');
+      }
+      // Escape: the interface owns it while a menu is open (settings → pause →
+      // world); otherwise a conversation closes, or the pause menu opens.
+      if (code === 'Escape') {
+        if (this.ui.overlay === 'none') {
+          if (this.npcs.conversationView) this.endDialogue();
+          else this.ui.togglePause();
+        }
+      } else if (this.npcs.conversationView && /^Digit[1-4]$/.test(code)) {
+        this.selectDialogueTopic(Number(code.slice(5)) - 1);
+      }
       if (code === 'KeyV') { this.vegetation.setEnabled(!this.vegetation.vegetationEnabled); this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled); this.updateURL(); }
       if (code === 'KeyT') { this.toggleTour(); this.ui.dismissIntro(); }
       if (code === 'KeyG') { if (this.rig.routeFollowing) this.rig.routeFollowing = false; else { const r = this.roads.routeAt(this.rig.position); this.rig.startRoute(r.corridor, r.station); } this.ui.dismissIntro(); this.updateURL(); }
@@ -215,8 +348,15 @@ export class Game {
 
       if (code === 'KeyP') { this.sky.cycling = !this.sky.cycling; this.ui.syncTime(this.sky.hour, this.sky.cycling); }
       if (code === 'KeyC') this.setMode(this.mode === 'character' ? 'survey' : 'character');
-      if (code === 'KeyF') { this.character.toggleFirstPerson(); this.ui.syncCamera(this.mode, this.character.isFirstPerson); }
+      if (code === 'KeyF' && !this.rig.inspecting) { this.character.toggleFirstPerson(); this.ui.syncCamera(this.mode, this.character.isFirstPerson); }
       if (code === 'KeyZ') this.character.toggleShoulder();
+      // Phase 10: Q enters/leaves a vehicle, Y cycles the vehicle camera.
+      if (code === 'KeyQ' && this.mode === 'character') { this.toggleVehicle(); this.ui.dismissIntro(); }
+      if (code === 'KeyY' && this.driving) {
+        const view = this.vehicleCamera.cycle();
+        this.events.emit('vehicle:viewChanged', { id: this.driving.id, view });
+        this.ui.toast(`Camera: ${view}`);
+      }
     };
     window.addEventListener('resize', () => { resizeRenderer(this.context, this.quality); this.rig.resize(); this.character.resize(); }, { signal: this.abort.signal });
     document.addEventListener('visibilitychange', () => { this.loop.reset(); this.input.clear(); }, { signal: this.abort.signal });
@@ -237,12 +377,16 @@ export class Game {
     const hour = params.has('hour') && Number.isFinite(Number(params.get('hour'))) ? clamp(Number(params.get('hour')), 0, 23.99) : CONFIG.sky.initialHour;
     const coordinate = (key: string) => { const value = Number(params.get(key)); return params.has(key) && Number.isFinite(value) ? clamp(value, -1e12, 1e12) : 0; };
     const position = new Vector3(coordinate('x'), 450, coordinate('z'));
-    const route = SCENIC_ROUTES.find((r) => r.id === params.get('route')) ?? (!params.has('x') && !params.has('z') ? SCENIC_ROUTES[0] : undefined);
+    const requestedBuilding = params.get('building');
+    const building = requestedBuilding ? new TerrainField(seed).buildings.getById(requestedBuilding) : undefined;
+    const route = building ? undefined : (SCENIC_ROUTES.find((r) => r.id === params.get('route')) ?? (!params.has('x') && !params.has('z') ? SCENIC_ROUTES[0] : undefined));
     if (route) {
       const network = new RoadNetwork(seed, () => 0);
       const station = findRouteStation(seed, route.corridor, route.biome, route.station);
       const point = network.point(route.corridor, station);
       position.set(point.x, 450, point.z);
+    } else if (building) {
+      position.set(building.position.x, building.position.y + 1.65, building.position.z);
     } else if (!params.has('x') && !params.has('z')) {
       const vista = findBiomeViewpoint(seed, 1);
       position.set(vista.x, vista.y + 110, vista.z);
@@ -256,6 +400,7 @@ export class Game {
     const characterUrl = params.get('character');
     if (characterUrl) await game.character.loadAsset(characterUrl);
     game.ui.syncCamera(game.mode, game.character.isFirstPerson);
+    if (building) game.buildingExperience.visit(building);
     return game;
   }
 
@@ -298,7 +443,10 @@ export class Game {
 
   /** Canonical world position the streaming systems follow. */
   private resolveActivePosition(): Vector3 {
-    if (this.mode === 'character' && this.character.ready) this.activePosition.copy(this.character.position);
+    // Streaming, origin rebasing and the sky all follow whatever the player is
+    // actually travelling in, so a fast vehicle pulls the world along with it.
+    if (this.driving) this.activePosition.copy(this.driving.body.position);
+    else if (this.mode === 'character' && this.character.ready) this.activePosition.copy(this.character.position);
     else this.activePosition.copy(this.rig.position);
     return this.activePosition;
   }
@@ -311,16 +459,30 @@ export class Game {
 
   private frame(timestamp: number): void {
     if (this.disposed || document.hidden) return;
+    if (this.paused) { this.renderPaused(); return; }
+    // Keys pressed behind a menu or the title screen must never move the player.
+    if (this.ui.overlay !== 'none') this.input.clear();
     try {
       this.loop.tick(timestamp, (dt) => {
-        if (!this.ready) return;
-        if (this.mode === 'character') this.character.fixedUpdate(dt);
+        if (!this.ready || this.discoveryPanel.isOpen) return;
+        if (this.driving) {
+          // Control handover: the character is parked while driving, and the
+          // vehicle is stepped on the same fixed step as everything else.
+          this.vehicleInput.apply(this.input, this.driving.spec.vehicleClass, dt, this.driving.controls);
+        } else if (this.mode === 'character') this.character.fixedUpdate(dt);
         else this.rig.fixedUpdate(dt);
+        this.vehicles.fixedUpdate(dt, this.resolveActivePosition());
+        this.buildings.fixedUpdate(dt, this.resolveActivePosition());
         this.propPhysics.step(dt, this.groundSample);
+        this.npcs.fixedUpdate(dt, this.resolveActivePosition());
         this.updateInteraction(dt);
       }, (alpha, dt) => {
         const focus = this.resolveActivePosition();
         this.world.update(dt, focus);
+        this.buildings.update(focus, dt, this.sky.hour);
+        this.buildingExperience.update(timestamp);
+        if (this.ready && this.ui.overlay === 'none' && this.mode === 'character') this.discovery.visit(focus);
+        this.discoveryPanel.update(focus, this.character.controller.yaw, timestamp);
         if (!this.ready) {
           this.loadTime += dt;
           // Spawn as soon as the local grid exists; keep loading distant roots behind the overlay.
@@ -349,6 +511,11 @@ export class Game {
         }
         this.renderActive(this.ready ? alpha : 1, dt);
         this.objects.update(dt, focus, this.origin.absolute, alpha);
+        this.npcs.update(dt, focus, this.origin.absolute, alpha);
+        this.ui.setDialogue(this.npcs.conversationView);
+        this.updateAudio(dt, focus);
+        this.vehicles.update(dt, focus, this.origin.absolute, alpha);
+        this.updateVehicleCamera(dt, this.ready ? alpha : 1);
         this.origin.toLocal(focus, this.localPosition);
         if (this.ready) this.sky.update(dt, this.localPosition, this.activeCamera);
         const fog = this.scene.fog as Fog;
@@ -363,6 +530,7 @@ export class Game {
         const worldStats = this.world.stats;
         const objects = this.objects.stats;
         const propPhysics = this.propPhysics.stats;
+        const npcStats = this.npcs.stats;
         const route = this.mode === 'survey' && this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null;
         const biome = BIOMES[this.terrain.biomeAt(focus.x, focus.z)] ?? BIOMES[0];
         const character = this.character.snapshot();
@@ -393,6 +561,9 @@ export class Game {
           routeName: route ? `${route.name} · ${route.number}` : null, routeStation: route ? route.kilometre : null,
           objects: objects.active, objectBodies: propPhysics.bodies, objectSleeping: propPhysics.sleeping,
           inventoryItems: this.inventory.total, interactionTarget: this.interaction.targetId,
+          npcActive: npcStats.active, npcFull: npcStats.full, npcReduced: npcStats.reduced,
+          npcBackground: npcStats.background, npcRigs: npcStats.rigs, npcRigCapacity: npcStats.rigCapacity,
+          npcNearest: npcStats.nearest, npcSearches: npcStats.searches, npcTruncated: npcStats.truncated,
           progress: this.terrain.wanted ? this.terrain.ready / this.terrain.wanted : 0,
           physicsEnabled: this.world.isEnabled && !!this.physics,
           physicsBodies: worldStats.physics?.bodies ?? 0,
@@ -403,6 +574,10 @@ export class Game {
           entityFull: worldStats.entities.full, entityReduced: worldStats.entities.reduced,
           entityBackground: worldStats.entities.background, entityDormant: worldStats.entities.dormant,
           physicsProps: worldStats.props,
+          audioState: this.audio.state, audioVoices: this.audio.stats().voices,
+          audioCapacity: this.audio.stats().capacity, audioDropped: this.audio.stats().dropped,
+          audioZone: dominantZone(this.audioDirector.zoneWeights),
+          audioSteps: this.audioDirector.stepCount,
         }, timestamp);
       });
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
@@ -415,6 +590,7 @@ export class Game {
    */
   private setMode(mode: ViewMode): void {
     if (mode === this.mode) return;
+    if (this.driving) this.leaveVehicle();
     if (mode === 'survey') {
       this.rig.position.copy(this.character.ready ? this.character.position : this.rig.position);
       this.rig.previous.copy(this.rig.position);
@@ -483,6 +659,89 @@ export class Game {
       savedState: saved,
     });
     this.objects.setEnabled(this.objectsEnabled);
+
+    // Phase 8 population: deterministic placement, schedule-driven behaviour and
+    // its own persistence slice. NPCs walk around the static objects the player
+    // can collide with, and share the interaction manager with them.
+    const restoredNpcs = this.npcStore.load(seed);
+    let npcState: PersistedNpcs = {};
+    if (restoredNpcs.status === 'ok') npcState = restoredNpcs.save.npcs;
+    else if (restoredNpcs.status === 'invalid') {
+      console.warn('[Wayfarer] NPC save ignored:', restoredNpcs.reason);
+      this.restoreNotice = `Saved people state was ignored: ${restoredNpcs.reason}`;
+    }
+    this.npcs = new NpcManager({
+      seed,
+      queries: this.queries,
+      events: this.events,
+      interaction: this.interaction,
+      quality: this.quality,
+      terrain: this.terrain,
+      blockers: { blocked: (x, z) => this.objects.blocksWalk(x, z) || (this.buildings?.field.reserved(x, z, 1) ?? false) },
+      time: () => this.sky?.hour ?? CONFIG.sky.initialHour,
+      notify: (message) => { this.ui?.toast(message); },
+      savedState: npcState,
+    });
+    this.npcs.setEnabled(this.npcsEnabled);
+    const vehicleSave = this.vehicleStore.load(seed);
+    if (vehicleSave.status === 'invalid') console.warn('[Wayfarer] vehicle save ignored:', vehicleSave.reason);
+    this.vehicles = new VehicleSystem({ seed, queries: this.queries, events: this.events, interaction: this.interaction,
+      ...(vehicleSave.status === 'ok' ? { savedState: vehicleSave.save.vehicles } : {}) });
+  }
+
+  // ---- Vehicles --------------------------------------------------------------
+
+  /** True while the player is driving rather than on foot. */
+  get isDriving(): boolean { return this.driving !== undefined; }
+
+  /**
+   * Enter the nearest vehicle, or leave the current one. Control handover is
+   * explicit: the character is parked and hidden, input is routed to the
+   * vehicle, and the camera swaps to the vehicle rig.
+   */
+  private toggleVehicle(): void {
+    if (this.driving) { this.leaveVehicle(); return; }
+    if (this.mode !== 'character' || !this.character.ready) return;
+    const target = this.vehicles.nearestEnterable(this.character.position);
+    if (!target) { this.ui.toast('No vehicle within reach'); return; }
+    const seat = this.vehicles.enter(target.id, 'player');
+    if (!seat) { this.ui.toast(`${target.spec.label} is occupied`); return; }
+    this.driving = target;
+    this.character.active = false;
+    this.vehicleInput.reset();
+    this.vehicleCamera.reset();
+    this.ui.toast(`${target.spec.label} · Q to exit, Y for camera`);
+    this.ui.setPrompt(null);
+  }
+
+  private leaveVehicle(): void {
+    const vehicle = this.driving;
+    if (!vehicle) return;
+    const point = this.vehicles.exit(vehicle.id, 'player');
+    this.driving = undefined;
+    vehicle.controls.throttle = 0;
+    vehicle.controls.brake = 1;
+    this.character.active = true;
+    if (point) this.character.spawnAt(point.x, point.z);
+    this.vehicleInput.reset();
+    this.saveDirty = true;
+    this.ui.toast(`Left the ${vehicle.spec.label.toLowerCase()}`);
+  }
+
+  /** Drive the camera from the vehicle rig and return its canonical eye point. */
+  private updateVehicleCamera(dt: number, alpha: number): void {
+    const vehicle = this.driving;
+    if (!vehicle) return;
+    const pose = this.vehicleCamera.update(dt, vehicle, alpha, this.vehicles.environment);
+    this.vehicleEye.copy(pose.eye);
+    this.vehicleTarget.copy(pose.target);
+    const camera = this.character.camera;
+    this.origin.toLocal(this.vehicleEye, this.vehicleLocal);
+    camera.position.copy(this.vehicleLocal);
+    this.origin.toLocal(this.vehicleTarget, this.vehicleLocal);
+    camera.up.set(Math.sin(pose.roll), Math.cos(pose.roll), 0);
+    camera.lookAt(this.vehicleLocal);
+    if (camera.fov !== pose.fov) { camera.fov = pose.fov; camera.updateProjectionMatrix(); }
   }
 
   /** Swap the whole gameplay layer when the world seed changes. */
@@ -490,10 +749,16 @@ export class Game {
     this.saveDirty = false;
     this.interaction.clear();
     this.propPhysics.clear();
+    this.leaveVehicle();
     this.objects.dispose();
+    this.npcs.dispose();
+    this.vehicles.dispose();
+    this.scene.remove(this.vehicles.root);
     this.buildGameplayLayer(seed);
-    this.scene.add(this.objects.group);
+    this.scene.add(this.objects.group, this.npcs.group, this.vehicles.root);
     this.ui.syncObjects(this.objects.objectsEnabled);
+    this.ui.syncNpcs(this.npcs.isEnabled);
+    this.ui.setDialogue(null);
     this.ui.setPack(this.inventory.stacks());
     this.ui.setPrompt(null);
   }
@@ -504,6 +769,7 @@ export class Game {
    * rig while flying, so a prompt always matches the camera that produced it.
    */
   private updateInteraction(dt: number): void {
+    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); return; }
     const onFoot = this.mode === 'character' && this.character.ready;
     const position = onFoot ? this.character.position : this.rig.position;
     const yaw = onFoot ? this.character.cameraRig.yaw : this.rig.yaw;
@@ -530,12 +796,77 @@ export class Game {
     const result = this.store.save(this.seed, this.objects.serializeState(), this.inventory.stacks());
     this.saveDirty = false;
     this.lastSave = timestamp;
-    if (result.status === 'ok') return;
-    console.warn('[Wayfarer] object save skipped:', result.reason);
-    if (result.status === 'refused') this.ui?.toast(`Save not written: ${result.reason}`);
+    if (this.vehicles) {
+      const vr = this.vehicleStore.save(this.seed, this.vehicles.persistedState());
+      if (vr.status !== 'ok') console.warn('[Wayfarer] vehicle save skipped:', vr.reason);
+    }
+    if (result.status !== 'ok') {
+      console.warn('[Wayfarer] object save skipped:', result.reason);
+      if (result.status === 'refused') this.ui?.toast(`Save not written: ${result.reason}`);
+    }
+    if (!this.npcs) return;
+    const npcResult = this.npcStore.save(this.seed, this.npcs.serializeState());
+    if (npcResult.status !== 'ok') {
+      console.warn('[Wayfarer] NPC save skipped:', npcResult.reason);
+      if (npcResult.status === 'refused') this.ui?.toast(`People state not written: ${npcResult.reason}`);
+    }
+  }
+
+  /** Reply to the open conversation (also reachable by clicking the panel). */
+  private selectDialogueTopic(index: number): void {
+    if (!this.npcs.conversationView) return;
+    this.npcs.selectTopic(index);
+    this.ui.setDialogue(this.npcs.conversationView);
+    this.saveDirty = true;
+  }
+
+  private endDialogue(): void {
+    this.npcs.endConversation('player');
+    this.ui.setDialogue(null);
+  }
+
+  /** Manual slots are separate from legacy per-seed object autosaves. */
+  saveGame(slot: number): void {
+    if (this.driving) { this.ui.toast('Exit the vehicle before saving a grounded player slot.'); return; }
+    if (!this.ready || !this.character.ready) { this.ui.toast('Wait for the world to finish loading.'); return; }
+    try {
+      const p = this.character.position;
+      const result = new GameSaveStore(localStorage).save(slot, {
+        format: 'wayfarer.game', version: 1, savedAt: Date.now(), seed: this.seed,
+        player: { x: p.x, z: p.z }, hour: this.sky.hour, cycling: this.sky.cycling,
+        discovery: this.discovery.snapshot(), objects: { format: 'wayfarer.objects', version: 1, seed: this.seed,
+          savedAt: Date.now(), objects: this.objects.serializeState(), inventory: this.inventory.stacks() },
+      });
+      this.ui.toast(result.status === 'ok' ? `Saved slot ${slot}` : result.status === 'error' ? result.reason : 'Save unavailable');
+    } catch (error) { this.ui.toast(`Save failed: ${String(error)}`); }
+  }
+
+  loadGame(slot: number): void {
+    try {
+      const result = new GameSaveStore(localStorage).load(slot);
+      if (result.status !== 'ok') { this.ui.toast(result.status === 'empty' ? 'Slot is empty.' : result.reason); return; }
+      const save = result.save;
+      this.flushSave();
+      this.changeSeed(save.seed);
+      // Reset active objects as well as their baseline, so collected objects cannot linger.
+      this.objects.reset(save.seed, save.objects.objects);
+      this.inventory.restore(save.objects.inventory);
+      this.saveDirty = true;
+      this.discovery.restore(save.discovery);
+      this.sky.setHour(save.hour); this.sky.cycling = save.cycling;
+      this.ui.syncTime(save.hour, save.cycling);
+      this.rig.position.set(save.player.x, 450, save.player.z);
+      this.rig.previous.copy(this.rig.position); this.rig.touring = false; this.rig.routeFollowing = false;
+      this.character.spawnAt(save.player.x, save.player.z);
+      this.setMode('character');
+      this.origin.update(this.rig.position);
+      this.updateURL();
+      this.ui.toast(`Loaded slot ${slot} — grounded respawn`);
+    } catch (error) { this.ui.toast(`Load failed: ${String(error)}`); }
   }
 
   private toggleTour(): void {
+    if (this.rig.inspecting) this.buildingExperience.stop();
     if (this.rig.routeFollowing || this.rig.touring) { this.rig.routeFollowing = false; this.rig.touring = false; }
     else this.rig.touring = true;
     this.updateURL();
@@ -549,6 +880,7 @@ export class Game {
     if (!this.physics || !this.world.isReady) { this.ui.toast('Physics is still initialising'); return; }
     // Drop in front of whatever the player is looking through: the character on
     // foot, the survey rig while flying.
+    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); return; }
     const onFoot = this.mode === 'character' && this.character.ready;
     const from = onFoot ? this.character.position : this.rig.position;
     const yaw = onFoot ? this.character.cameraRig.yaw : this.rig.yaw;
@@ -565,12 +897,15 @@ export class Game {
     this.world.setReady(false);
     this.resetVersion++;
     this.scene.userData.ready = false;
-    this.input.clear(); this.ui.beginLoading(); this.loop.reset();
+    this.input.clear(); this.ui.beginLoading(); this.ui.setMenuStatus('Generating a new world…'); this.loop.reset();
   }
 
   private changeSeed(seed: string): void {
     this.beginLoading();
+    this.buildingExperience.stop();
     this.seed = seed;
+    this.discovery.restore({ cells: [], waypoint: null });
+    this.buildings.reset(seed);
     this.origin.reset();
     this.terrain.reset(seed, this.quality);
     this.vegetation.reset();
@@ -595,9 +930,12 @@ export class Game {
     this.terrain.reset(this.seed, quality);
     this.vegetation.setQuality(quality);
     this.roads.setQuality(quality);
+    this.buildings.setQuality(quality);
     this.sky.setQuality(quality);
     this.post.setQuality(quality);
     this.objects.setQuality(quality);
+    this.npcs.setQuality(quality);
+    this.ui.syncNpcs(this.npcs.isEnabled);
     this.propPhysics.setCapacity(QUALITY[quality].physicsBodies);
     this.ui.syncPost(this.post.isEnabled);
     this.ui.syncCamera(this.mode, this.character.isFirstPerson);
@@ -614,6 +952,7 @@ export class Game {
   private travelRoute(id: string): void {
     const route = SCENIC_ROUTES.find((r) => r.id === id);
     if (!route) return;
+    this.buildingExperience.stop();
     this.beginLoading();
     const station = findRouteStation(this.seed, route.corridor, route.biome, route.station);
     this.rig.startRoute(route.corridor, station);
@@ -630,6 +969,7 @@ export class Game {
   }
 
   private travelTo(biome: BiomeId): void {
+    this.buildingExperience.stop();
     const radius = biome >= 3 ? 9000 : 6000;
     const from = this.resolveActivePosition();
     const vista = findBiomeViewpoint(this.seed, biome, from.x, from.z, radius);
@@ -659,10 +999,13 @@ export class Game {
     url.searchParams.set('vegetation', this.vegetation.vegetationEnabled ? '1' : '0');
     url.searchParams.set('roads', this.roads.roadsEnabled ? '1' : '0');
     url.searchParams.set('objects', this.objectsEnabled ? '1' : '0');
+    url.searchParams.set('npcs', this.npcsEnabled ? '1' : '0');
     if (this.rig.routeFollowing) { const route = SCENIC_ROUTES.find((r) => r.corridor === this.rig.routeCorridor); if (route) url.searchParams.set('route', route.id); else url.searchParams.delete('route'); } else url.searchParams.delete('route');
     url.searchParams.set('postfx', this.post.isEnabled ? '1' : '0');
     if (this.world.isEnabled) url.searchParams.delete('physics'); else url.searchParams.set('physics', '0');
     url.searchParams.set('mode', this.mode);
+    const building = this.buildingExperience?.activeBuilding;
+    if (building) url.searchParams.set('building', building); else url.searchParams.delete('building');
     history.replaceState(null, '', url);
   }
 
@@ -670,6 +1013,144 @@ export class Game {
     this.updateURL();
     try { await navigator.clipboard.writeText(location.href); this.ui.toast('World link copied — seed, location, time and quality included'); }
     catch { this.ui.toast('Copy the address bar to share this exact world and viewpoint'); }
+  }
+
+
+  /* ---- Phase 12: audio, menus and preferences ----------------------------- */
+
+  /**
+   * Render the frozen scene while paused. Simulation, streaming and audio are all
+   * stopped; only the picture stays, so resuming is instant and lossless.
+   */
+  private renderPaused(): void {
+    if (!this.ready) return;
+    this.post.setCamera(this.activeCamera);
+    this.post.render(this.scene, this.activeCamera);
+  }
+
+  /** First user gesture unlocks Web Audio (autoplay policy); never requested twice. */
+  private bindAudioUnlock(): void {
+    if (this.audioUnlockBound) return;
+    this.audioUnlockBound = true;
+    // Keep listening until the context actually runs: a blocked or interrupted
+    // resume (device sleep, tab switch) is retried on the next gesture.
+    const unlock = () => {
+      void this.audio.resume().then(() => {
+        if (this.audio.state !== 'running') return;
+        window.removeEventListener('pointerdown', unlock);
+        window.removeEventListener('keydown', unlock);
+      });
+    };
+    window.addEventListener('pointerdown', unlock, { signal: this.abort.signal });
+    window.addEventListener('keydown', unlock, { signal: this.abort.signal });
+  }
+
+  /** Overlay changes are the single source of truth for pausing and pointer lock. */
+  private handleOverlay(overlay: string): void {
+    const paused = overlay === 'pause';
+    if (paused !== this.paused) this.setPaused(paused);
+    if (overlay !== 'none') {
+      this.input.clear();
+      if (document.pointerLockElement) document.exitPointerLock();
+    }
+  }
+
+  private setPaused(paused: boolean): void {
+    this.paused = paused;
+    this.input.clear();
+    this.loop.reset();
+    this.audioDirector.setPaused(paused);
+    // Silence and suspend while paused: a frozen world should not hum.
+    if (paused) void this.audio.suspend();
+    else void this.audio.resume();
+  }
+
+  private setVolume(bus: 'master' | 'ambience' | 'effects' | 'ui', value: number): void {
+    const audio = { ...this.preferences.audio, [bus]: Math.max(0, Math.min(1, value)) };
+    this.preferences = { ...this.preferences, audio };
+    this.audioDirector.setSettings(audio);
+    this.ui.syncAudio(audio);
+    savePreferences(this.preferences);
+  }
+
+  private setMuted(muted: boolean): void {
+    const audio = { ...this.preferences.audio, muted };
+    this.preferences = { ...this.preferences, audio };
+    this.audioDirector.setSettings(audio);
+    this.ui.syncAudio(audio);
+    savePreferences(this.preferences);
+    this.ui.toast(muted ? 'Sound muted — captions stay on if enabled' : 'Sound on');
+  }
+
+  private setCaptionsEnabled(enabled: boolean): void {
+    const audio = { ...this.preferences.audio, captions: enabled };
+    this.preferences = { ...this.preferences, audio };
+    this.audioDirector.setSettings(audio);
+    applyPreferences(this.preferences, document.documentElement);
+    this.ui.syncAudio(audio);
+    savePreferences(this.preferences);
+    if (!enabled) this.ui.setCaptions([]);
+  }
+
+  private setAccessibility(key: keyof AccessibilityPreferences, value: boolean): void {
+    const accessibility = { ...this.preferences.accessibility, [key]: value };
+    this.preferences = { ...this.preferences, accessibility };
+    applyPreferences(this.preferences, document.documentElement);
+    this.ui.syncPreferences(accessibility);
+    savePreferences(this.preferences);
+    if (key === 'reducedMotion') {
+      this.vegetation.setWind(!value);
+      if (value) {
+        this.motionRestore = { cycling: this.sky.cycling, touring: this.rig.touring };
+        this.sky.cycling = false;
+        this.rig.touring = false;
+      } else if (this.motionRestore) {
+        this.sky.cycling = this.motionRestore.cycling;
+        this.rig.touring = this.motionRestore.touring;
+        this.motionRestore = null;
+      }
+      this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
+      this.ui.syncTime(this.sky.hour, this.sky.cycling);
+    }
+    if (key === 'interactionHold') {
+      this.interaction.setHoldToConfirm(value);
+      this.ui.toast(value ? 'Hold to confirm interactions' : 'Single press interactions');
+    }
+  }
+
+  /** Feed the audio director from the same state the renderer and HUD use. */
+  private updateAudio(dt: number, focus: Vector3): void {
+    if (!this.ready) return;
+    this.captionClock += dt;
+    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); return; }
+    const onFoot = this.mode === 'character' && this.character.ready;
+    const character = this.character.snapshot();
+    const frame: AudioFrame = {
+      player: { x: focus.x, y: focus.y, z: focus.z },
+      yaw: onFoot ? this.character.cameraRig.yaw : this.rig.yaw,
+      // The survey camera never makes footstep sounds; it has no feet.
+      speed: onFoot ? character.speed : 0,
+      verticalSpeed: onFoot ? character.verticalSpeed : 0,
+      grounded: !onFoot || character.grounded,
+      stance: onFoot ? character.stance : 'stand',
+      swimming: onFoot && character.swimming,
+      surface: this.queries.surface(focus.x, focus.z),
+      biome: this.terrain.biomeAt(focus.x, focus.z) as BiomeId,
+      altitude: focus.y,
+      hour: this.sky.hour,
+      windEnabled: this.vegetation.windEnabled,
+    };
+    this.audioDirector.update(dt, frame);
+    this.ui.setCaptions(this.captions.list(this.captionClock));
+  }
+
+  /** Resolve an event's world id to a position so its sound can be panned. */
+  private locateSoundSource(id: string): { x: number; y: number; z: number } | undefined {
+    const npc = this.npcs?.list().find((entry) => entry.id === id);
+    if (npc) return { x: npc.x, y: npc.y, z: npc.z };
+    const object = this.objects?.list().find((entry) => entry.id === id);
+    if (object) return { x: object.x, y: object.y, z: object.z };
+    return undefined;
   }
 
   private fail(error: Error): void {
@@ -696,20 +1177,26 @@ export class Game {
   snapshot() {
     const focus = this.resolveActivePosition();
     return { ready: this.ready, seed: this.seed, backend: this.context.backend,
+      discovery: this.discovery.snapshot(),
       mode: this.mode, character: this.character.snapshot(),
       characterPosition: this.character.position.toArray(),
       position: focus.toArray(), origin: this.origin.absolute.toArray(),
       shifts: this.origin.shifts, hour: this.sky.hour, ...this.terrain.stats,
       quality: this.quality, biome: BIOMES[this.terrain.biomeAt(focus.x, focus.z)]!.name,
       biomeDebug: this.terrain.biomeDebug, vegetationEnabled: this.vegetation.vegetationEnabled,
+      vehicles: this.vehicles.stats(), driving: this.driving?.id ?? null,
+      inspecting: this.rig.inspecting, buildings: this.buildings.snapshot(),
       windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, postfxEnabled: this.post.isEnabled, vegetation: this.vegetation.stats,
       roads: this.roads.stats, world: this.world.stats,
       routeFollowing: this.rig.routeFollowing, route: this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null,
       objects: { ...this.objects.stats, list: this.objects.list() },
+      npcs: { ...this.npcs.stats, list: this.npcs.list(), conversation: this.npcs.conversationView },
       physics: this.propPhysics.stats,
       inventory: { stacks: this.inventory.stacks(), total: this.inventory.total },
       interaction: { targetId: this.interaction.targetId, prompt: this.interaction.currentPrompt, providers: this.interaction.providerCount },
       objectsEnabled: this.objectsEnabled,
+      paused: this.paused, overlay: this.ui.overlay, preferences: this.preferences,
+      audio: { ...this.audio.stats(), steps: this.audioDirector.stepCount },
       touring: this.rig.touring, speed: this.rig.velocity.length(),
       fps: this.loop.fps, drawCalls: this.context.renderer.info.render.drawCalls,
       gpuBytes: this.context.renderer.info.memory.total };
@@ -720,12 +1207,15 @@ export class Game {
     this.disposed = true;
     this.abort.abort(); this.unsubscribeOrigin();
     void this.context.renderer.setAnimationLoop(null);
+    this.buildingExperience.dispose(); this.buildings.dispose();
     if (this.saveDirty) this.flushSave();
+    this.discoveryPanel.dispose();
     this.input.dispose(); this.ui.dispose(); this.world.dispose();
     this.physicsDebug?.dispose();
     this.physics?.dispose();
     this.character.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
-    this.objects.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
+    this.audioDirector?.dispose(); this.audio?.dispose();
+    this.vehicles.dispose(); this.npcs.dispose(); this.objects.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
     clearObjectGeometryCache();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }

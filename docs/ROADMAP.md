@@ -30,11 +30,11 @@ systems a story will later plug into.
 | **5 — Playable character** ✅ | Capsule character controller on the fixed step, locomotion state machine (walk/jog/sprint/crouch/jump/fall/land), slope and step handling, coyote time and jump buffering, third-person camera with collision avoidance, first-person option, GLTF humanoid + animation blending, swim foundation | 4 |
 | **6 — Objects & interaction** ✅ | Interactable interface (id, prompt, range, predicates, cooldown, persistent state), context-sensitive prompts, doors/containers/switches/pickups, physics props, object persistence. Gamepad + touch input abstraction remain pending | 4, 5 |
 | **7 — Buildings & interiors** | Modular building templates and prefabs, terrain-conforming placement, collision, room graphs, doors, stairs, furniture, interior lighting, indoor/outdoor transitions, interior streaming | 4, 6 |
-| **8 — NPCs & life simulation** | NPC entities, behaviour FSM/behaviour trees, navmesh over streamed terrain, perception (vision cones, LOS, events), schedules, interaction/dialogue hooks, LOD population management, persistence | 4, 5, 7 |
+| **8 — NPCs & life simulation** ✅ | NPC entities, behaviour FSM/behaviour trees, navmesh over streamed terrain, perception (vision cones, LOS, events), schedules, interaction/dialogue hooks, LOD population management, persistence | 4, 5 |
 | **9 — Water & environment** | Lakes/rivers/ocean bodies, water shading with capability fallbacks, buoyancy via multi-point displacement, swimming/diving, splashes and wakes, weather controller (rain/snow/fog/storm) driving light, surface wetness, particles | 4, 5 |
 | **10 — Universal vehicles** | Shared vehicle interface (seats, entry/exit, camera, audio, damage, persistence) with distinct controllers: raycast-suspension road vehicles, motorcycle/bicycle balance, aircraft aerodynamics + helicopters, watercraft buoyancy/propulsion, sailing | 4, 9 |
 | **11 — Discovery & gameplay infrastructure** | World map + minimap from canonical coordinates, route calculation, waypoints, discovery/fog-of-war, save/load with versioned schemas and migration, inventory hooks, generic mission/objective/flag system on the event bus | 4–10 |
-| **12 — Audio, UX & polish** | Spatial audio with zones and mixing, footsteps/engines/weather sounds, main and pause menus, settings, accessibility, loading/recovery, presentation pass | all |
+| **12 — Audio, UX & polish** ✅ | Spatial audio with zones and mixing, procedural footsteps, main and pause menus, settings, accessibility, loading/recovery, presentation pass | all |
 | **13 — Optimisation & release** | Adaptive quality, profiling, browser matrix, memory and GPU fallback testing, long-run streaming, save validation, regression suite, production build | all |
 
 ## Phase 4 contracts that later phases must honour
@@ -61,6 +61,52 @@ These are load-bearing; changing them requires updating every consumer.
 8. **No story.** Narrative, dialogue and missions mount on Phase 11 infrastructure;
    they are not part of the engine phases.
 
+## Phase 8 contracts that later phases must honour
+
+These extend the Phase 4 and 6 contracts; all remain in force.
+
+1. **Population is data.** A population is `(seed, canonical cell, slot) → PlacedNpc`
+   with stable ids and home/work/leisure anchors. Authored NPCs register in the same
+   planning path; nothing spawns people ad hoc.
+2. **Motion is intent.** Behaviour nodes call `walkTo` / `stop` / `face` on
+   `NpcAgent`. Only `CharacterMotion` on the fixed step writes NPC positions.
+3. **Brains are replaceable.** `NpcBrain.setBehaviourTree` accepts authored trees;
+   conversation, obstacle, startle and reaction guards stay above them.
+4. **Perception is reusable.** `Perception` answers sight (cone + terrain LOS),
+   hearing, memory and the startle flag from world queries only; missions, vehicles
+   and audio subscribe through the event bus rather than re-deriving visibility.
+5. **Navigation is budgeted.** `NavField` searches are globally rate-limited and
+   expansion-capped, and an unreachable goal returns `null` — never a partial path.
+   `NavigationBlockers` is the seam for buildings and vehicles.
+6. **Interaction is generic.** NPCs implement the Phase 6 `InteractionProvider`
+   with a structural `InteractionArchetype`; do not re-specialise it per content type.
+7. **People persist as a diff.** `NpcStateStore` stores only changed records, keyed by
+   seed, versioned and refused when the format is unknown or newer.
+8. **No story.** Conversations are functional hooks composed from live world data.
+   Narrative, factions and quests mount on Phase 11.
+
+## Phase 12 contracts that later phases must honour
+
+These extend the Phase 4, 6 and 8 contracts; all remain in force.
+
+1. **One audio path.** Vehicles, weather, buildings and missions submit typed
+   `AudioPlayRequest`s through `AudioDirector`/`AudioEngine`; nothing else creates
+   an `AudioContext`, a voice or a node. Budgets are decided by `VoiceMixer`.
+2. **Sound is data.** A new sound is a `SoundId` plus a recipe (bus, priority,
+   layers, caption); ad-hoc node graphs in gameplay code are not accepted.
+3. **Overlays are one machine.** `MenuState` owns title/pause/settings visibility,
+   pause semantics and focus; new full-screen surfaces are transitions there, not
+   new booleans in the game loop.
+4. **Preferences are disposable.** `wayfarer.preferences` is versioned, clamped and
+   typed, separate from save data, and its failure is never fatal.
+5. **Accessibility is a requirement.** New cues need a caption or visual equivalent,
+   and new interactions respect the hold-to-confirm preference.
+6. **Degrade silently.** Missing Web Audio, a blocked autoplay resume, denied
+   storage or a closed context must never break simulation or input.
+7. **Engines and weather are deferred, not faked.** Phase 12 synthesises
+   footsteps, objects, conversations and ambience only; vehicle/weather audio
+   arrives with Phases 10 and 9.
+
 ## Phase 6 contracts that later phases must honour
 
 These extend the Phase 4 contracts; both remain in force.
@@ -79,3 +125,18 @@ These extend the Phase 4 contracts; both remain in force.
 5. **Growth rules** — every system streams, respects a budget and disposes its GPU
    resources; simulation runs on the fixed step; no unbounded object, body, particle or
    listener creation.
+
+## Phase 11 implementation progress
+
+Milestone 11.1 adds a canonical-coordinate local chart, waypoint, bounded character
+exploration and three validated manual game-save slots. This is a partial Phase 11,
+not the completed map/navigation/mission system. See [PHASE11.md](PHASE11.md) for
+source audit, integration model, validation results and remaining work.
+
+## Combined branch integration
+
+Phases 1–8, 10, Phase 11 milestone 11.1, and 12 are now assembled in one tree.
+Phase 9 remains intentionally excluded while under development. See
+[INTEGRATION.md](INTEGRATION.md) for merged source commits, validation and known
+cross-phase adapter gaps. Presence in the combined tree is not a declaration that
+all planned features of a phase are complete.

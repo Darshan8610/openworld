@@ -19,10 +19,28 @@ export interface GameEventMap {
   'player:exitedBuilding': { id: string };
   'player:seated': { objectId: string };
   'player:stood': { objectId: string };
+  'vehicle:spawned': { id: string; key: string; vehicleClass: string };
+  'vehicle:despawned': { id: string };
+  'vehicle:entered': { id: string; key: string; seat: string; actor: string };
+  'vehicle:exited': { id: string; key: string; seat: string; actor: string; x: number; y: number; z: number };
+  'vehicle:damaged': { id: string; key: string; severity: number; health: number; wrecked: boolean };
+  'vehicle:recovered': { id: string; key: string };
+  'vehicle:viewChanged': { id: string; view: string };
   'world:originRebased': { x: number; y: number; z: number; shifts: number };
   'world:objectsReset': { seed: string };
   'physics:bodySlept': { id: string };
   'physics:bodyWoke': { id: string };
+  /** Phase 8 — NPC life simulation. Consumers: UI, audio (12), missions (11). */
+  'npc:spawned': { id: string; role: string; level: string };
+  'npc:despawned': { id: string; role: string };
+  'npc:behaviourChanged': { id: string; behaviour: string; activity: string };
+  'npc:detectedPlayer': { id: string; distance: number };
+  'npc:playerLost': { id: string };
+  'npc:talkStarted': { id: string; label: string };
+  'npc:talkEnded': { id: string; reason: 'player' | 'distance' | 'timeout' };
+  'npc:topicSelected': { id: string; topic: string; line: string };
+  'npc:stateChanged': { id: string; role: string };
+  'world:npcReset': { seed: string };
 }
 export type GameEventType = keyof GameEventMap;
 type Handler<K extends GameEventType> = (payload: GameEventMap[K]) => void;
