@@ -118,6 +118,8 @@ export class WebAudioEngine implements AudioEngine {
   private muted = false;
   /** Master volume slider, applied to the master node (mute overrides it). */
   private masterLevel = 1;
+  /** Cutscene ducking: multiplies the master while a cinematic plays (1 = none). */
+  private duckLevel = 1;
   private closed = false;
 
   constructor(options: AudioEngineOptions = {}) {
@@ -344,8 +346,15 @@ export class WebAudioEngine implements AudioEngine {
   /** The master node carries mute and the master slider; buses carry their own mix. */
   private applyMaster(): void {
     if (!this.context || !this.master) return;
-    const level = this.muted ? 0 : this.masterLevel;
+    const level = this.muted ? 0 : this.masterLevel * this.duckLevel;
     this.master.gain.setTargetAtTime(level, this.context.currentTime, 0.05);
+  }
+
+  /** Duck the whole mix for cutscenes/dialogue (1 = untouched, 0 = silent). */
+  setDuck(level: number): void {
+    if (!Number.isFinite(level)) return;
+    this.duckLevel = Math.min(1, Math.max(0, level));
+    this.applyMaster();
   }
 
   get isMuted(): boolean { return this.muted; }

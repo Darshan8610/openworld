@@ -63,6 +63,8 @@ export class NpcManager {
 
   private readonly active = new Map<string, NpcInstance>();
   private readonly planned = new Map<string, PlacedNpc[]>();
+  /** Authored (story) NPCs kept alive across streaming, e.g. Evelyn. */
+  private readonly authoredPlacements: PlacedNpc[] = [];
   private readonly saved = new Map<string, NpcRecord>();
   private readonly visuals = new NpcVisualPool();
   private readonly behaviourMemory = new Map<string, { behaviour: string; activity: string }>();
@@ -337,6 +339,12 @@ export class NpcManager {
 
   /* ---- internals --------------------------------------------------------- */
 
+  /** Story campaign: pin an authored character (Evelyn) into the stream. */
+  addAuthored(placement: PlacedNpc): void {
+    if (this.authoredPlacements.some((entry) => entry.id === placement.id)) return;
+    this.authoredPlacements.push(placement);
+  }
+
   private stream(player: WorldPoint): void {
     const cells = npcCellsAround(player.x, player.z, CONFIG.npc.loadRadius);
     this.cells = cells.length;
@@ -357,6 +365,7 @@ export class NpcManager {
       }
       for (const placement of planned) wanted.push(placement);
     }
+    for (const placement of this.authoredPlacements) wanted.push(placement);
 
     const distanceOf = (placement: PlacedNpc) => Math.hypot(placement.x - player.x, placement.z - player.z);
     wanted.sort((a, b) => distanceOf(a) - distanceOf(b));

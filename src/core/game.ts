@@ -84,6 +84,9 @@ import { BuildingManager } from '../world/buildings/manager';
 import { BuildingExperience } from '../world/buildings/experience';
 import { TerrainField } from '../world/terrain-field';
 import type { BuildingStorage } from '../world/buildings/state';
+import { CAMPAIGN, LANDMARKS } from '../story/campaign';
+import type { PlacedVehicle } from '../vehicles/placement';
+import { StoryGame } from '../story/story';
 
 /** Composition root: subsystem ownership and lifecycle are explicit. */
 export class Game {
@@ -130,6 +133,12 @@ export class Game {
   private readonly events = new GameEventBus();
   /** Phase 11: mission/objective/flag runtime — infrastructure only, no story. */
   private readonly objectives = new ObjectiveRuntime(this.events);
+  /** Phase 11.3 — Echoes of Blackwood Valley narrative layer (absent when story=0). */
+  private story?: StoryGame;
+  /** Authoring flag read once from the URL; the sandbox stays reachable via story=0. */
+  private readonly storyEnabled: boolean;
+  /** Solids the survey camera and character collide with (buildings + story bounds). */
+  private readonly cameraSolids: Object3D[] = [];
   /** Seconds accumulated toward the silent 120 s autosave (slot 0). */
   private autosaveElapsed = 0;
   /** On-foot building bindings (doors) currently registered, by interaction id. */
@@ -205,6 +214,8 @@ export class Game {
   };
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
+    // Story mode flag (URL story=0 keeps the infinite sandbox reachable).
+    this.storyEnabled = new URLSearchParams(location.search).get('story') !== '0';
     this.context = context; this.seed = seed; this.quality = quality; this.qualityCeiling = quality;
     this.scene.name = 'Wayfarer / integrated Phases 1–12';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
@@ -235,9 +246,8 @@ export class Game {
     // the scenic route so switching (C) never loses the route context.
     // Building wiring: walls block locomotion (with wall sliding), walkable
     // floors/porches are step-on surfaces, and the third-person camera treats
-    // streamed building meshes as solids. The array is filled after the
-    // BuildingManager below is constructed.
-    const cameraSolids: Object3D[] = [];
+    // streamed building meshes as solids. Filled after the BuildingManager
+    // below is constructed (field: cameraSolids, shared with story bounds).
     this.character = new CharacterSystem({
       scene: this.scene,
       terrain: this.terrain,
@@ -245,8 +255,8 @@ export class Game {
       input: this.input,
       quality,
       reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
-      colliders: cameraSolids,
-      blocked: (x, z, feetY) => this.buildings.blockedAt(x, z, feetY),
+      colliders: this.cameraSolids,
+      blocked: (x, z, feetY) => this.buildings.blockedAt(x, z, feetY) || (this.story?.bounds.blockedAt(x, z) ?? false),
       supportHeight: (x, z, baseY) => this.buildings.supportAt(x, z, baseY),
     });
     // Swimming reads the same water surface the renderer draws, waves included.
@@ -259,7 +269,15 @@ export class Game {
       seed, quality, origin: this.origin, terrain: this.terrain, storage: buildingStorage,
       onReservationsChanged: () => this.vegetation.invalidateReservations(),
     });
-    cameraSolids.push(this.buildings.group);
+    this.cameraSolids.push(this.buildings.group);
+    // Echoes of Blackwood Valley: authored landmark shells in the fixed valley.
+    if (this.storyEnabled) {
+      for (const landmark of LANDMARKS) {
+        this.buildings.registerAuthored({
+          id: landmark.buildingId, template: landmark.template, x: landmark.x, z: landmark.z, yaw: 0,
+        });
+      }
+    }
     this.vegetation.setReservationQuery((x, z) => this.buildings.field.isAuthoredReserved(x, z));
     this.sky = new SkySystem(context.renderer, this.scene, seed, quality);
     this.sky.setHour(hour);
@@ -365,6 +383,29 @@ export class Game {
     this.bindAudioUnlock();
     this.ui.setPack(this.inventory.stacks());
     this.events.on('inventory:changed', ({ items }) => this.ui.setPack(items));
+    // ---- Phase 11.3: Echoes of Blackwood Valley ----------------------------
+    if (this.storyEnabled) {
+      this.story = new StoryGame({
+        events: this.events, objectives: this.objectives, discovery: this.discovery,
+        inventory: this.inventory,
+        registerProvider: (provider) => this.interaction.register(provider),
+        unregisterProvider: (id) => this.interaction.unregister(id),
+        weather: this.weather, sky: this.sky, ui: this.ui,
+        ground: (x, z) => this.terrain.heightAt(x, z) ?? 0,
+        roadZ: (x) => this.roads.network.center(0, x) ?? 0,
+        reducedMotion: this.preferences.accessibility.reducedMotion,
+        spawnArrival: () => {
+          const x = CAMPAIGN.arrival.x; const z = CAMPAIGN.arrival.z;
+          this.character.controller.position.set(x, (this.terrain.heightAt(x, z) ?? 0) + 0.1, z);
+          this.origin.update(this.character.controller.position);
+        },
+        duck: (level) => this.audio.setDuck(level),
+      });
+      this.scene.add(this.story.bounds.group);
+      this.cameraSolids.push(this.story.bounds.group);
+      this.story.bounds.setSurfaceSampler((x, z) => this.terrain.heightAt(x, z) ?? 0);
+      this.spawnStoryActors();
+    }
     this.events.on('object:stateChanged', () => { this.saveDirty = true; });
     this.events.on('vehicle:damaged', () => { this.saveDirty = true; });
     this.events.on('vehicle:exited', () => { this.saveDirty = true; });
@@ -397,10 +438,12 @@ export class Game {
         this.updateURL();
         this.ui.toast(this.npcsEnabled ? 'People return to the world' : 'People hidden — the world still streams');
       }
-      // Escape: the interface owns it while a menu is open (settings → pause →
-      // world); otherwise a conversation closes, or the pause menu opens.
+      // Escape: a running cinematic skips first, then the interface owns it
+      // while a menu is open (settings → pause → world); otherwise a
+      // conversation closes, or the pause menu opens.
       if (code === 'Escape') {
-        if (this.ui.overlay === 'none') {
+        if (this.story?.cinematic.active) this.story.cinematic.skip();
+        else if (this.ui.overlay === 'none') {
           if (this.npcs.conversationView) this.endDialogue();
           else this.ui.togglePause();
         }
@@ -446,18 +489,21 @@ export class Game {
 
   static async create(host: HTMLElement): Promise<Game> {
     const params = new URLSearchParams(location.search);
-    const seed = normalizeSeed(params.get('seed') || randomSeed());
+    // Phase 11.3 story mode: campaign seed/hour unless the URL overrides them.
+    const storyMode = params.get('story') !== '0';
+    const seed = storyMode && !params.has('seed') ? CAMPAIGN.seed : normalizeSeed(params.get('seed') || randomSeed());
     let quality: QualityName = 'ultra';
     try { const saved = localStorage.getItem('wayfarer.quality'); if (saved && saved in QUALITY) quality = saved as QualityName; } catch { /* Private browsing can deny storage. */ }
     if (matchMedia('(pointer: coarse)').matches && !params.has('quality')) quality = 'low';
     const requestedQuality = params.get('quality');
     if (requestedQuality && requestedQuality in QUALITY) quality = requestedQuality as QualityName;
-    const hour = params.has('hour') && Number.isFinite(Number(params.get('hour'))) ? clamp(Number(params.get('hour')), 0, 23.99) : CONFIG.sky.initialHour;
+    const hour = params.has('hour') && Number.isFinite(Number(params.get('hour'))) ? clamp(Number(params.get('hour')), 0, 23.99) : (storyMode ? CAMPAIGN.initialHour : CONFIG.sky.initialHour);
     const coordinate = (key: string) => { const value = Number(params.get(key)); return params.has(key) && Number.isFinite(value) ? clamp(value, -1e12, 1e12) : 0; };
     const position = new Vector3(coordinate('x'), 450, coordinate('z'));
+    if (storyMode && !params.has('x') && !params.has('z')) position.set(CAMPAIGN.arrival.x, 450, CAMPAIGN.arrival.z);
     const requestedBuilding = params.get('building');
     const building = requestedBuilding ? new TerrainField(seed).buildings.getById(requestedBuilding) : undefined;
-    const route = building ? undefined : (SCENIC_ROUTES.find((r) => r.id === params.get('route')) ?? (!params.has('x') && !params.has('z') ? SCENIC_ROUTES[0] : undefined));
+    const route = building || storyMode ? undefined : (SCENIC_ROUTES.find((r) => r.id === params.get('route')) ?? (!params.has('x') && !params.has('z') ? SCENIC_ROUTES[0] : undefined));
     if (route) {
       const network = new RoadNetwork(seed, () => 0);
       const station = findRouteStation(seed, route.corridor, route.biome, route.station);
@@ -547,7 +593,7 @@ export class Game {
     if (this.disposed || document.hidden) return;
     if (this.paused) { this.renderPaused(); return; }
     // Keys pressed behind a menu or the title screen must never move the player.
-    if (this.ui.overlay !== 'none') this.input.clear();
+    if (this.ui.overlay !== 'none' || this.story?.cinematic.active) this.input.clear();
     try {
       const frameStart = performance.now();
       let fixedMs = 0;
@@ -569,6 +615,8 @@ export class Game {
         this.stepWake(dt);
         this.propPhysics.step(dt, this.groundSample);
         this.npcs.fixedUpdate(dt, this.resolveActivePosition());
+        // Echoes of Blackwood Valley: the valley walls are absolute.
+        if (this.story && this.story.boundsActive) this.enforceStoryBounds();
         this.updateInteraction(dt);
         // Mission infrastructure: feed the canonical player position so `reach`
         // objectives evaluate on the fixed clock, never on render rate.
@@ -614,6 +662,7 @@ export class Game {
               this.worldEvents.emit('world:ready', { seed: this.seed, backend: this.context.backend, physics: !!this.physics });
               this.sky.update(0, this.origin.toLocal(this.activePosition, this.localPosition), this.activeCamera, true);
               this.ui.ready(this.context.backend);
+              this.story?.onWorldReady();
               this.loop.reset();
               if (this.context.fallbackReason) this.ui.toast(`Using WebGL2 compatibility mode · ${this.context.backend}`);
             }).catch((error: unknown) => this.fail(error instanceof Error ? error : new Error(String(error))));
@@ -646,6 +695,8 @@ export class Game {
         this.context.renderer.info.reset();
         this.post.setCamera(this.activeCamera);
         this.post.render(this.scene, this.activeCamera);
+        // Phase 11.3: cinematics/mission banners advance on render cadence (real time).
+        this.story?.update(dt);
         if (this.saveDirty && this.ready && timestamp - this.lastSave > 4000) this.flushSave(timestamp);
         // Phase 11: silent autosave every 120 s into slot 0 (never while
         // driving or behind a menu — saveGame enforces both, silently here).
@@ -869,6 +920,7 @@ export class Game {
     this.mode = mode;
     this.input.clear();
     this.ui.syncCamera(this.mode, this.character.isFirstPerson);
+    this.ui.setHudVisible(mode === 'character');
     this.ui.toast(mode === 'character' ? 'On foot — WASD to move, Space to jump, C for the survey camera' : 'Survey camera — WASD flies, C returns to the character');
     this.updateURL();
   }
@@ -876,9 +928,63 @@ export class Game {
   /** Return the player to the current spawn point without regenerating the world. */
   private respawnPlayer(): void {
     if (this.mode !== 'character') this.setMode('character');
+    if (this.story) {
+      // Story mode: reconcile dead-ends, then walk back in at the valley arrival.
+      this.story.reconcilePlayerDied();
+      this.character.spawnAt(CAMPAIGN.arrival.x, CAMPAIGN.arrival.z);
+      this.origin.update(this.character.position);
+      this.ui.toast('Back on the valley road');
+      return;
+    }
     this.character.respawn();
     this.origin.update(this.character.position);
     this.ui.toast('Returned to the trailhead');
+  }
+
+  /** Pin story vehicles and Evelyn into the streaming systems (once, at boot). */
+  private spawnStoryActors(): void {
+    const ground = (x: number, z: number) => this.terrain.heightAt(x, z) ?? 0;
+    // Stranded service pickup near the arrival road pull-out.
+    const pickup: PlacedVehicle = {
+      id: 'story:service-pickup', key: 'pickup',
+      x: CAMPAIGN.arrival.x + 9, y: ground(CAMPAIGN.arrival.x + 9, CAMPAIGN.arrival.z + 6) + 0.3,
+      z: CAMPAIGN.arrival.z + 6, yaw: 1.9, source: 'pullout',
+    };
+    this.vehicles.addAuthored(pickup);
+    // Forestry utility truck for the Chapter III run to the lookout.
+    const station = LANDMARKS[2]!;
+    const truckX = station.x + 14; const truckZ = station.z + 22;
+    this.vehicles.addAuthored({
+      id: 'story:utility-truck', key: 'truck',
+      x: truckX, y: ground(truckX, truckZ) + 0.3, z: truckZ, yaw: 0.6, source: 'pullout',
+    });
+    // Evelyn holds the Whispering Pines porch; all anchors coincide so she stays.
+    const motel = LANDMARKS[1]!;
+    const evelynX = motel.x - 12; const evelynZ = motel.z + 15;
+    const porch = { x: evelynX, y: ground(evelynX, evelynZ), z: evelynZ };
+    this.npcs.addAuthored({
+      id: 'story:evelyn', role: 'survivor',
+      x: porch.x, y: porch.y, z: porch.z, yaw: 2.6,
+      anchors: { home: porch, work: porch, leisure: porch },
+    });
+  }
+
+  /** Campaign walls and ravine: clamp whatever the player drives or walks. */
+  private enforceStoryBounds(): void {
+    const bounds = this.story?.bounds;
+    if (!bounds) return;
+    if (this.driving) {
+      const body = this.driving.body;
+      const x = body.position.x; const z = body.position.z;
+      bounds.clamp(body.position);
+      if (body.position.x !== x) body.velocity.x = 0;
+      if (body.position.z !== z) body.velocity.z = 0;
+    } else if (this.character.ready && this.mode === 'character') {
+      const position = this.character.controller.position;
+      const x = position.x; const z = position.z;
+      bounds.clamp(position);
+      if (position.x !== x || position.z !== z) this.origin.update(position);
+    }
   }
 
   /**
@@ -1168,6 +1274,9 @@ export class Game {
   /** Reply to the open conversation (also reachable by clicking the panel). */
   private selectDialogueTopic(index: number): void {
     if (!this.npcs.conversationView) return;
+    const topic = this.npcs.conversationView.topics[index];
+    // Story-authored trees (Evelyn) run through the narrative runner instead.
+    if (topic && this.story?.chooseDialogueTopic(index)) return;
     this.npcs.selectTopic(index);
     this.ui.setDialogue(this.npcs.conversationView);
     this.saveDirty = true;
@@ -1176,6 +1285,7 @@ export class Game {
   private endDialogue(): void {
     this.npcs.endConversation('player');
     this.ui.setDialogue(null);
+    this.story?.setDialogueDuck(false);
   }
 
   /** Manual slots are separate from legacy per-seed object autosaves. Slot 0 = autosave. */
@@ -1190,6 +1300,7 @@ export class Game {
         hour: this.sky.hour, cycling: this.sky.cycling,
         weather: this.weather.overridden,
         objectives: this.objectives.snapshot(),
+        story: this.story?.saveState(),
         discovery: this.discovery.snapshot(), objects: { format: 'wayfarer.objects', version: 1, seed: this.seed,
           savedAt: Date.now(), objects: this.objects.serializeState(), inventory: this.inventory.stacks() },
       });
@@ -1216,6 +1327,9 @@ export class Game {
       const weatherKinds: readonly string[] = ['clear', 'partly-cloudy', 'cloudy', 'overcast', 'rain', 'heavy-rain', 'storm', 'fog', 'snow', 'blizzard', 'windy'];
       this.weather.setOverride(save.weather !== null && weatherKinds.includes(save.weather) ? save.weather as WeatherKind : null);
       this.objectives.restore(save.objectives);
+      if (save.story && this.story) {
+        if (!this.story.restoreState(save.story)) this.ui.toast('Narrative progress from a newer build — resuming at the current beat.');
+      }
       this.rig.position.set(save.player.x, 450, save.player.z);
       this.rig.previous.copy(this.rig.position); this.rig.touring = false; this.rig.routeFollowing = false;
       this.character.spawnAt(save.player.x, save.player.z, save.player.yaw);
@@ -1372,6 +1486,7 @@ export class Game {
     url.searchParams.set('roads', this.roads.roadsEnabled ? '1' : '0');
     url.searchParams.set('objects', this.objectsEnabled ? '1' : '0');
     url.searchParams.set('npcs', this.npcsEnabled ? '1' : '0');
+    url.searchParams.set('story', this.storyEnabled ? '1' : '0');
     if (this.water) url.searchParams.set('water', this.water.isEnabled ? '1' : '0');
     if (this.weather?.overridden) url.searchParams.set('weather', this.weather.overridden);
     else url.searchParams.delete('weather');
@@ -1651,6 +1766,7 @@ export class Game {
     this.discoveryPanel.dispose();
     this.minimap.dispose();
     this.objectives.dispose();
+    this.story?.dispose();
     this.input.dispose(); this.ui.dispose(); this.world.dispose();
     this.physicsDebug?.dispose();
     this.physics?.dispose();

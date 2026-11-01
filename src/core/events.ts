@@ -52,6 +52,8 @@ export interface GameEventMap {
   'mission:objectiveCompleted': { id: string; missionId: string; label: string };
   'mission:completed': { id: string };
   'mission:flagSet': { name: string; value: boolean | number | string };
+  /** Phase 11.3 — the story campaign changed act (weather/time/cutscenes). */
+  'story:actChanged': { act: string };
 }
 export type GameEventType = keyof GameEventMap;
 type Handler<K extends GameEventType> = (payload: GameEventMap[K]) => void;

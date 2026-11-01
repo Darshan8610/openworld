@@ -60,6 +60,8 @@ export class VehicleSystem {
   private readonly anchors = new Map<string, Group>();
   private readonly audio = new Map<string, VehicleAudioHooks>();
   private readonly planned = new Map<string, PlacedVehicle[]>();
+  /** Authored (story) placements kept alive across streaming. */
+  private readonly authoredPlacements: PlacedVehicle[] = [];
   private readonly persisted: PersistedVehicles;
   private readonly pendingRemoval: string[] = [];
   private readonly renderPoint: WorldPoint = { x: 0, y: 0, z: 0 };
@@ -286,12 +288,21 @@ export class VehicleSystem {
     this.persisted[vehicle.id] = { key: vehicle.spec.key, state: vehicle.serialize() };
   }
 
+  /** Story campaign: pin vehicles at authored spots (diner pickup, station truck). */
+  addAuthored(entry: PlacedVehicle): void {
+    if (this.authoredPlacements.some((placed) => placed.id === entry.id)) return;
+    this.authoredPlacements.push(entry);
+  }
+
   // ---- Streaming --------------------------------------------------------------
 
   private stream(player: WorldPoint): void {
     const cells = vehicleCellsAround(player.x, player.z, this.loadRadius);
     this.cells = cells.length;
     const wanted: PlacedVehicle[] = [];
+    // Story vehicles are pinned and always considered alongside the procedural
+    // plans; they sort in with everything else by distance.
+    for (const entry of this.authoredPlacements) wanted.push(entry);
 
     // Planning touches the road field and terrain; build a few cells per tick,
     // nearest first, so a fast vehicle never stalls a frame on world generation.

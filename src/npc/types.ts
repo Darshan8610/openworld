@@ -10,7 +10,7 @@ import type { AnimState } from '../character/animation-controller';
  */
 
 /** Generic population roles. No lore, no factions, no named characters. */
-export const NPC_ROLES = ['wanderer', 'worker', 'watcher', 'traveller'] as const;
+export const NPC_ROLES = ['wanderer', 'worker', 'watcher', 'traveller', 'survivor'] as const;
 export type NpcRole = typeof NPC_ROLES[number];
 
 export const isNpcRole = (value: unknown): value is NpcRole =>

@@ -15,6 +15,9 @@ export const ITEM_DEFINITIONS = {
   'survey-tag': { label: 'Survey tag', category: 'collectible', maxStack: 50, description: 'A numbered trail marker.' },
   'fuel-can': { label: 'Fuel can', category: 'supply', maxStack: 4, description: 'Twenty litres, sealed.' },
   'scrap-metal': { label: 'Scrap metal', category: 'material', maxStack: 30, description: 'Salvage stock.' },
+  'service-keys': { label: 'Service ignition keys', category: 'collectible', maxStack: 1, description: 'Diner fleet keys on a paper tag.' },
+  'forestry-keycard': { label: 'Forestry keycard', category: 'collectible', maxStack: 1, description: 'Security card for the Station gate.' },
+  'truck-keys': { label: 'Utility truck keys', category: 'collectible', maxStack: 1, description: 'Heavy truck ignition key.' },
 } as const;
 
 export type ItemId = keyof typeof ITEM_DEFINITIONS;

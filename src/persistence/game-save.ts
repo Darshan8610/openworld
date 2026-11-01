@@ -3,6 +3,7 @@ import type { DiscoveryState } from '../discovery/discovery';
 import { validateObjectSave } from './object-store';
 import type { ObjectSave } from './object-store';
 import { FLAG_LIMIT, FLAG_NAME_MAX, MISSION_LIMIT, OBJECTIVES_PER_MISSION } from '../game/objectives';
+import { validateNarrativeState } from '../story/narrative-state';
 import type { MissionProgress } from '../game/objectives';
 
 /**
@@ -22,6 +23,8 @@ export interface GameSave {
   weather: string | null;
   /** Mission/objective/flag progress. Definitions are content, not save data. */
   objectives: MissionProgress;
+  /** Phase 11.3 story campaign snapshot (Echoes of Blackwood Valley). Optional. */
+  story?: import('../story/narrative-state').NarrativeState;
   discovery: DiscoveryState; objects: ObjectSave;
 }
 export interface SaveStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
@@ -72,9 +75,14 @@ export function validateGameSave(value: unknown): GameSave {
   const weather = value.version === 2 ? value.weather : null;
   if (weather !== null && (typeof weather !== 'string' || weather.length > 64)) throw new Error('Invalid weather override.');
   const objectives = value.version === 2 ? validateObjectives(value.objectives ?? EMPTY_OBJECTIVES) : { flags: {}, started: [], completed: [], counts: {} };
+  // Story block is optional and lenient: invalid shapes drop to "no story state"
+  // so a newer build's save never fails an older load.
+  const story = value.version === 2 && value.story !== undefined
+    ? (validateNarrativeState(value.story) ?? undefined)
+    : undefined;
   return { format: 'wayfarer.game', version: 2, seed: value.seed, savedAt: value.savedAt,
     player: { x: p.x, z: p.z, yaw },
-    hour: value.hour, cycling: value.cycling, weather, objectives,
+    hour: value.hour, cycling: value.cycling, weather, objectives, story,
     discovery: { cells: [...d.cells] as string[], waypoint: d.waypoint === null ? null : { x: (d.waypoint as {x:number}).x, z: (d.waypoint as {z:number}).z } }, objects: objects.save };
 }
 /** Each localStorage setItem is atomic. Never replace an unreadable/newer slot. */

@@ -33,6 +33,11 @@ export const NPC_DEFINITIONS: Readonly<Record<NpcRole, NpcDefinition>> = {
     role: 'traveller', label: 'Road traveller', accent: 0x8a6f9c, heightScale: 1.01, speedScale: 1.08,
     schedule: 'roamer', radii: RADII, curious: true, alertDistance: 13,
   },
+  /** Story character (Echoes of Blackwood Valley): authored, static, fearful. */
+  survivor: {
+    role: 'survivor', label: 'Evelyn', accent: 0x5c4a63, heightScale: 0.96, speedScale: 0.55,
+    schedule: 'settler', radii: RADII, curious: false, alertDistance: 9,
+  },
 };
 
 export function definitionFor(role: NpcRole): NpcDefinition {

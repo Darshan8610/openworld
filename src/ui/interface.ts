@@ -271,6 +271,11 @@ Just you, and what’s over the next ridge.</p>${menuFieldsMarkup(seed, quality)
       </main>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
       <div class="captions" id="captions-feed" role="status" aria-live="polite" aria-label="Sound captions" hidden></div>
+      <div class="letterbox" id="letterbox" hidden aria-hidden="true"><i class="letterbox-top"></i><i class="letterbox-bottom"></i></div>
+      <div class="story-subtitle" id="story-subtitle" role="status" aria-live="polite" hidden><b id="story-subtitle-speaker"></b><span id="story-subtitle-text"></span></div>
+      <div class="mission-banner" id="mission-banner" role="status" aria-live="polite" hidden><span class="mission-banner-kind" id="mission-banner-kind"></span><b id="mission-banner-title"></b><span id="mission-banner-detail"></span></div>
+      <div class="clue-overlay" id="clue-overlay" role="dialog" aria-label="Field note" hidden><div class="clue-card"><span class="eyebrow" id="clue-kind">FIELD NOTE</span><h2 id="clue-title"></h2><p id="clue-body"></p><button class="primary" id="clue-close" type="button">Close <span>×</span></button></div></div>
+      <div class="credits-overlay" id="credits-overlay" role="dialog" aria-label="Credits" hidden><div class="credits-card"><span class="eyebrow">ECHOES OF BLACKWOOD VALLEY</span><h1>The valley keeps its silence.</h1><p>Jack Mercer walks out of the fog as morning light breaks through the pines.</p><p class="credits-thanks">Thanks for playing.</p></div></div>
 ${pauseMarkup()}
       <div class="loading" id="loading"><div class="loading-brand">WAYFARER</div><div class="loading-line"><span id="loading-progress"></span></div><p id="loading-text">Finding your next horizon…</p><span class="loading-meta">PROCEDURAL TERRAIN · SEEDED & INFINITE</span></div>
       <div class="fatal" id="fatal" hidden><span class="eyebrow">A SMALL DETOUR</span><h1>We couldn’t open this world.</h1><p id="fatal-message"></p><button class="primary" id="retry">Try again</button><button class="text-button" id="compatibility">Try WebGL2 compatibility mode</button></div>`;
@@ -280,6 +285,7 @@ ${pauseMarkup()}
 export class Interface {
   private abort = new AbortController();
   private toastTimer = 0;
+  private missionBannerTimer = 0;
   private lastUpdate = 0;
   statsVisible = false;
   private promptKey = '';
@@ -331,6 +337,7 @@ export class Interface {
     on('objects', 'change', () => actions.objects($<HTMLInputElement>('#objects').checked));
     on('npcs', 'change', () => actions.npcs($<HTMLInputElement>('#npcs').checked));
     on('dialogue-close', 'click', () => actions.dialogueEnd());
+    on('clue-close', 'click', () => { $<HTMLDivElement>('#clue-overlay').hidden = true; });
     on('dialogue-topics', 'click', (event) => {
       const target = event.target as HTMLElement | null;
       const button = target?.closest('button[data-topic]') as HTMLButtonElement | null;
@@ -642,6 +649,47 @@ export class Interface {
   toast(message: string): void { clearTimeout(this.toastTimer); $('#toast').textContent = message; $('#toast').classList.add('visible'); this.toastTimer = window.setTimeout(() => $('#toast').classList.remove('visible'), 4200); }
   fatal(message: string): void { $('#loading').classList.add('loaded'); $('#fatal-message').textContent = message; $('#fatal').hidden = false; }
 
+  // ---- Story campaign (Echoes of Blackwood Valley) --------------------------
+
+  /** Subtle banner on mission start / objective update / act completion. */
+  missionBanner(kind: 'mission' | 'objective' | 'act', title: string, detail: string): void {
+    clearTimeout(this.missionBannerTimer);
+    const banner = $<HTMLDivElement>('#mission-banner');
+    $('#mission-banner-kind').textContent = kind === 'act' ? 'CHAPTER' : kind === 'objective' ? 'OBJECTIVE' : 'MISSION';
+    $('#mission-banner-title').textContent = title;
+    $('#mission-banner-detail').textContent = detail;
+    banner.hidden = false;
+    banner.classList.remove('visible');
+    // Force a reflow so the entrance animation replays on rapid updates.
+    void banner.offsetWidth;
+    banner.classList.add('visible');
+    this.missionBannerTimer = window.setTimeout(() => {
+      banner.classList.remove('visible');
+      window.setTimeout(() => { banner.hidden = true; }, 400);
+    }, kind === 'act' ? 5200 : 3800);
+  }
+
+  setLetterbox(on: boolean): void { $<HTMLDivElement>('#letterbox').hidden = !on; }
+
+  setSubtitle(text: string | null, speaker?: string | null): void {
+    const element = $<HTMLDivElement>('#story-subtitle');
+    if (text === null) { element.hidden = true; return; }
+    $('#story-subtitle-speaker').textContent = speaker ? `${speaker} ·` : '';
+    $('#story-subtitle-text').textContent = text;
+    element.hidden = false;
+  }
+
+  setHudVisible(visible: boolean): void { document.body.classList.toggle('story-cinematic', !visible); }
+
+  showClue(clue: { title: string; body: string; kind: string }): void {
+    $('#clue-kind').textContent = clue.kind === 'cassette' ? 'AUDIO PLAYED' : clue.kind === 'log' ? 'RECORDING' : 'FIELD NOTE';
+    $('#clue-title').textContent = clue.title;
+    $('#clue-body').textContent = clue.body;
+    $<HTMLDivElement>('#clue-overlay').hidden = false;
+  }
+
+  setCredits(on: boolean): void { $<HTMLDivElement>('#credits-overlay').hidden = !on; }
+
   update(stats: UIStats, now: number): void {
     if (now - this.lastUpdate < 180) return;
     this.lastUpdate = now;
@@ -706,6 +754,6 @@ export class Interface {
       `LOD 0–5     ${stats.lod.join(' · ')}`,
     ].join('\n');
   }
-  dispose(): void { this.abort.abort(); clearTimeout(this.toastTimer); }
+  dispose(): void { this.abort.abort(); clearTimeout(this.toastTimer); clearTimeout(this.missionBannerTimer); }
 }
 function formatHour(hour: number): string { return `${String(Math.floor(hour)).padStart(2, '0')}:${String(Math.floor((hour % 1) * 60)).padStart(2, '0')}`; }
