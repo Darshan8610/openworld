@@ -27,8 +27,8 @@ systems a story will later plug into.
 |---|---|---|
 | **1–3** | World foundation, biomes/vegetation, roads/routes/props, Ultra graphics | — |
 | **4 — Core game engine & physics** ✅ | Rapier integration, canonical↔physics-local coordinates, rebase-safe bodies, streamed terrain heightfield colliders, physics materials, collision layers/events, debug visualisation, entity model + multilevel streaming, unified world query, typed event bus, world manager ordering | 1–3 |
-| **5 — Playable character** | Capsule character controller on the fixed step, locomotion state machine (walk/jog/sprint/crouch/jump/fall/land), slope and step handling, coyote time and jump buffering, third-person camera with collision avoidance, first-person option, GLTF humanoid + animation blending, swim foundation | 4 |
-| **6 — Objects & interaction** | Interactable interface (id, prompt, range, predicates, cooldown, persistent state), context-sensitive prompts, doors/containers/switches/pickups, physics props, object persistence, gamepad + touch input abstraction | 4, 5 |
+| **5 — Playable character** ✅ | Capsule character controller on the fixed step, locomotion state machine (walk/jog/sprint/crouch/jump/fall/land), slope and step handling, coyote time and jump buffering, third-person camera with collision avoidance, first-person option, GLTF humanoid + animation blending, swim foundation | 4 |
+| **6 — Objects & interaction** ✅ | Interactable interface (id, prompt, range, predicates, cooldown, persistent state), context-sensitive prompts, doors/containers/switches/pickups, physics props, object persistence. Gamepad + touch input abstraction remain pending | 4, 5 |
 | **7 — Buildings & interiors** | Modular building templates and prefabs, terrain-conforming placement, collision, room graphs, doors, stairs, furniture, interior lighting, indoor/outdoor transitions, interior streaming | 4, 6 |
 | **8 — NPCs & life simulation** | NPC entities, behaviour FSM/behaviour trees, navmesh over streamed terrain, perception (vision cones, LOS, events), schedules, interaction/dialogue hooks, LOD population management, persistence | 4, 5, 7 |
 | **9 — Water & environment** | Lakes/rivers/ocean bodies, water shading with capability fallbacks, buoyancy via multi-point displacement, swimming/diving, splashes and wakes, weather controller (rain/snow/fog/storm) driving light, surface wetness, particles | 4, 5 |
@@ -60,3 +60,22 @@ These are load-bearing; changing them requires updating every consumer.
    rendering interpolates.
 8. **No story.** Narrative, dialogue and missions mount on Phase 11 infrastructure;
    they are not part of the engine phases.
+
+## Phase 6 contracts that later phases must honour
+
+These extend the Phase 4 contracts; both remain in force.
+
+1. **Objects** — every interactive thing implements `InteractionProvider`
+   (`centre`, `radius`, `range`, `targetLabel`, `actions()`, `state()`, `setState()`,
+   `remove()`). Targeting, prompt, hold-to-confirm and dispatch then work unchanged.
+2. **Streaming** — objects are deterministic in `(seed, canonical cell)` and stream
+   through `ObjectSystem` cells; authored content is placed by stable world coordinates.
+3. **Persistence** — state is versioned, validated, diff-only and keyed by seed; an
+   unknown or newer format is refused instead of overwritten. Regenerable baseline data
+   is never stored.
+4. **Prop physics** — gameplay prop bodies talk to `PropPhysicsWorld`
+   (`add`/`remove`/`step`/`applyImpulse`/`push`/`raycast`/`stats`), which is separate
+   from the Rapier world physics used for streamed terrain and large rigid bodies.
+5. **Growth rules** — every system streams, respects a budget and disposes its GPU
+   resources; simulation runs on the fixed step; no unbounded object, body, particle or
+   listener creation.

@@ -254,3 +254,45 @@ test('an external humanoid URL falls back to the placeholder rig when it cannot 
   expect(state.character.rig.warnings.join(' ')).toContain('character asset failed');
   await expect(page.locator('#fatal')).toBeHidden();
 });
+test('streams interactive world objects with physics and an interaction prompt', async ({ page }) => {
+  await openWorld(page);
+  await page.waitForFunction(() => (window.__WAYFARER__?.snapshot().objects.active ?? 0) > 0, null, { timeout: 90_000 });
+  const state = await snapshot(page);
+  expect(state.objects.cells).toBeGreaterThan(0);
+  expect(state.objects.active).toBeGreaterThan(0);
+  expect(state.objects.dynamic).toBeGreaterThan(0);
+  expect(state.objects.active).toBeLessThanOrEqual(128);
+  expect(state.physics.bodies).toBeGreaterThan(0);
+  expect(state.interaction.providers).toBe(state.objects.active);
+  // Settled props must actually sleep rather than jitter forever.
+  await page.waitForFunction(() => {
+    const physics = window.__WAYFARER__?.snapshot().physics;
+    return physics !== undefined && physics.awake <= physics.bodies;
+  }, null, { timeout: 30_000 });
+  const settled = await snapshot(page);
+  expect(settled.physics.awake).toBeLessThanOrEqual(settled.physics.bodies);
+  await expect(page.locator('#interaction')).toBeHidden();
+  await expect(page.locator('#fatal')).toBeHidden();
+});
+
+test('object toggle and share URL control the gameplay layer', async ({ page }) => {
+  await openWorld(page, '&objects=1');
+  await page.waitForFunction(() => (window.__WAYFARER__?.snapshot().objects.active ?? 0) > 0, null, { timeout: 90_000 });
+  await page.getByRole('button', { name: 'World settings' }).click();
+  await page.locator('#objects').uncheck();
+  await page.waitForFunction(() => (window.__WAYFARER__?.snapshot().objects.active ?? -1) === 0);
+  expect(page.url()).toContain('objects=0');
+  expect((await snapshot(page)).interaction.providers).toBe(0);
+  await page.locator('#objects').check();
+  await page.waitForFunction(() => (window.__WAYFARER__?.snapshot().objects.active ?? 0) > 0, null, { timeout: 90_000 });
+  expect(page.url()).toContain('objects=1');
+});
+
+test('objects=0 URL parameter never streams the gameplay layer', async ({ page }) => {
+  await openWorld(page, '&objects=0');
+  const state = await snapshot(page);
+  expect(state.objectsEnabled).toBe(false);
+  expect(state.objects.active).toBe(0);
+  expect(state.interaction.providers).toBe(0);
+  await expect(page.locator('#interaction')).toBeHidden();
+});

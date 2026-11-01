@@ -41,7 +41,8 @@ test('drops a physically simulated test crate and keeps it bounded', async ({ pa
   await openWorld(page);
   await waitForPhysics(page);
   await page.locator('canvas.world-canvas').click({ position: { x: 40, y: 40 } });
-  await page.keyboard.press('c');
+  // Phase 5 moved the view toggle onto C, so the sandbox crate lives on X.
+  await page.keyboard.press('x');
   await page.waitForFunction(() => (window.__WAYFARER__?.snapshot().world?.props ?? 0) > 0, null, { timeout: 20_000 });
   const state = await snapshot(page);
   expect(state.world.props).toBe(1);
