@@ -156,6 +156,22 @@ export const CONFIG = {
     stepBudgetMs: 4,
   },
   /**
+   * Phase 12 audio. Every sound is synthesised at runtime; these are policy
+   * values (budgets, distances), not assets.
+   */
+  audio: {
+    /** Hard cap on simultaneous one-shot voices. */
+    maxVoices: 24,
+    /** Per-bus caps; a bus can never exceed the global cap either. */
+    busVoices: { ambience: 4, effects: 16, ui: 6 },
+    /** Effect distance attenuation limit, metres. */
+    effectDistance: 46,
+    /** Ambience weights resample at this interval, seconds. */
+    ambienceInterval: 0.25,
+    /** Zone cross-fade time to a full change, seconds. */
+    zoneFadeSeconds: 2.5,
+  },
+  /**
    * Entity streaming distances and population caps. Level 0 is full fidelity;
    * level 3 is data-only and has no visual representation.
    */

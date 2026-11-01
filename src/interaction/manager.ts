@@ -49,10 +49,19 @@ export class InteractionManager {
   private now = 0;
   private actor: ActorView = { id: 'player', position: { x: 0, y: 0, z: 0 }, forward: { x: 0, y: 0, z: 1 }, yaw: 0 };
   private readonly options: TargetOptions;
+  /** Accessibility: off means a single press confirms instead of a hold. */
+  private holdToConfirm = true;
 
   constructor(private readonly deps: InteractionDependencies, options: Partial<TargetOptions> = {}) {
     this.options = { ...DEFAULT_TARGET_OPTIONS, ...options };
   }
+
+  setHoldToConfirm(enabled: boolean): void {
+    this.holdToConfirm = enabled;
+    if (!enabled) this.active = undefined;
+  }
+
+  get requiresHold(): boolean { return this.holdToConfirm; }
 
   register(provider: InteractionProvider): void {
     this.providers.set(provider.id, provider);
@@ -102,7 +111,7 @@ export class InteractionManager {
     if (this.active && (this.active.providerId !== provider.id || this.active.actionId !== action.id)) this.active = undefined;
     if (!input.down) this.active = undefined;
 
-    const holdSeconds = action.holdSeconds ?? 0;
+    const holdSeconds = this.holdToConfirm ? (action.holdSeconds ?? 0) : 0;
     if (input.down && (!this.active || !this.active.executed)) {
       const key = `${provider.id}:${action.id}`;
       const readyAt = this.cooldowns.get(key) ?? 0;

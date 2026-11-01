@@ -45,6 +45,13 @@ import type { PersistedNpcs } from '../npc/types';
 import type { ItemStack } from '../objects/items';
 import { clearObjectGeometryCache } from '../rendering/object-geometry';
 import type { ActorView } from '../interaction/types';
+import { WebAudioEngine } from '../audio/engine';
+import { AudioDirector } from '../audio/director';
+import type { AudioFrame } from '../audio/director';
+import { dominantZone } from '../audio/zones';
+import { CaptionFeed } from '../ui/captions';
+import { applyPreferences, loadPreferences, savePreferences, prefersReducedMotion } from '../ui/preferences';
+import type { AccessibilityPreferences, Preferences } from '../ui/preferences';
 
 /** Actor state the rig updates every fixed step; structurally an `ActorView`. */
 interface MutableActor extends ActorView {
@@ -99,6 +106,16 @@ export class Game {
   private npcs!: NpcManager;
   private readonly npcStore = new NpcStateStore();
   private npcsEnabled = true;
+  /** Phase 12: local preferences (audio mix + accessibility) and audio runtime. */
+  private preferences: Preferences = loadPreferences();
+  private audio!: WebAudioEngine;
+  private audioDirector!: AudioDirector;
+  private readonly captions = new CaptionFeed();
+  private captionClock = 0;
+  private paused = false;
+  /** Day-cycle/tour state saved when reduced motion is switched on. */
+  private motionRestore: { cycling: boolean; touring: boolean } | null = null;
+  private audioUnlockBound = false;
   private interactPressed = false;
   private saveDirty = false;
   private lastSave = 0;
@@ -118,15 +135,24 @@ export class Game {
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     this.context = context; this.seed = seed; this.quality = quality;
-    this.scene.name = 'Wayfarer / Phase 5';
+    this.scene.name = 'Wayfarer / Phase 12';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
+    // Preferences are local and known before anything else runs, so the first
+    // frame already respects reduced motion, contrast and the interaction mode.
+    if (prefersReducedMotion() && !this.preferences.accessibility.reducedMotion) {
+      this.preferences = {
+        ...this.preferences,
+        accessibility: { ...this.preferences.accessibility, reducedMotion: true },
+      };
+    }
+    applyPreferences(this.preferences, document.documentElement);
     this.terrain = new TerrainManager(this.origin, seed, quality, (error) => this.fail(error));
     this.vegetation = new VegetationManager(this.terrain, this.origin, quality);
     this.roads = new RoadManager(this.terrain, this.origin, quality, seed);
     if (new URLSearchParams(location.search).get('roads') === '0') this.roads.setEnabled(false);
     if (new URLSearchParams(location.search).get('vegetation') === '0') this.vegetation.setEnabled(false);
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) this.vegetation.setWind(false);
+    if (this.preferences.accessibility.reducedMotion) this.vegetation.setWind(false);
     this.buildGameplayLayer(seed);
     if (new URLSearchParams(location.search).get('objects') === '0') { this.objectsEnabled = false; this.objects.setEnabled(false); }
     if (new URLSearchParams(location.search).get('npcs') === '0') { this.npcsEnabled = false; this.npcs.setEnabled(false); }
@@ -165,6 +191,19 @@ export class Game {
         x: this.origin.absolute.x, y: this.origin.absolute.y, z: this.origin.absolute.z, shifts: this.origin.shifts,
       });
     });
+    // Phase 12: procedural audio. No files, no downloads; if Web Audio is
+    // missing the engine is a safe no-op and the panel says so.
+    this.audio = new WebAudioEngine({ beds: true });
+    this.audioDirector = new AudioDirector({
+      engine: this.audio,
+      settings: this.preferences.audio,
+      events: this.events,
+      locate: (id) => this.locateSoundSource(id),
+      onCaption: (text, pan) => {
+        this.captions.push(text, this.captionClock, pan);
+        this.ui?.setCaptions(this.captions.list(this.captionClock));
+      },
+    });
     this.ui = new Interface(seed, hour, quality, context.backend, {
       seed: (value) => this.changeSeed(normalizeSeed(value)),
       randomSeed: () => this.changeSeed(randomSeed()),
@@ -174,7 +213,7 @@ export class Game {
       quality: (value) => this.setQuality(value),
       tour: () => { this.toggleTour(); this.ui.dismissIntro(); },
       reset: () => { this.respawnPlayer(); this.ui.dismissIntro(); },
-      lock: () => { void this.input.lock(); },
+      lock: () => { void this.input.lock(); void this.audio.resume(); },
       debug: (value) => { this.terrain.setDebug(value); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); },
       wireframe: (value) => this.terrain.setWireframe(value),
       biomeDebug: (value) => { this.terrain.setBiomeDebug(value); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); },
@@ -198,6 +237,13 @@ export class Game {
       sensitivity: (value) => this.character.setSensitivity(value),
       shoulder: () => this.character.toggleShoulder(),
       respawn: () => this.respawnPlayer(),
+      volume: (bus, value) => this.setVolume(bus, value),
+      mute: (muted) => this.setMuted(muted),
+      captions: (enabled) => this.setCaptionsEnabled(enabled),
+      accessibility: (key, value) => this.setAccessibility(key, value),
+      restart: () => location.reload(),
+      title: () => location.reload(),
+      uiSound: (sound) => this.audioDirector.ui(sound),
     });
     this.ui.syncTime(hour, this.sky.cycling);
     this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
@@ -206,6 +252,14 @@ export class Game {
     this.ui.syncCamera(this.mode, this.character.isFirstPerson);
     this.ui.syncObjects(this.objects.objectsEnabled);
     this.ui.syncNpcs(this.npcs.isEnabled);
+    this.ui.syncAudio(this.preferences.audio);
+    this.ui.syncPreferences(this.preferences.accessibility);
+    this.ui.setAudioStatus(this.audio.available ? 'SYNTHESISED · WEB AUDIO' : 'AUDIO UNAVAILABLE');
+    this.ui.onOverlayChange = (overlay) => this.handleOverlay(overlay);
+    // The interface boots on the title screen before this callback exists.
+    this.handleOverlay(this.ui.overlay);
+    this.interaction.setHoldToConfirm(this.preferences.accessibility.interactionHold);
+    this.bindAudioUnlock();
     this.ui.setPack(this.inventory.stacks());
     this.events.on('inventory:changed', ({ items }) => this.ui.setPack(items));
     this.events.on('object:stateChanged', () => { this.saveDirty = true; });
@@ -214,6 +268,8 @@ export class Game {
     this.events.on('inventory:changed', () => { this.saveDirty = true; });
     if (this.restoreNotice) this.ui.toast(this.restoreNotice);
     this.input.onShortcut = (code) => {
+      // While a menu owns the screen, shortcuts must not reach the simulation.
+      if (this.ui.overlay !== 'none') return;
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
       if (code === 'KeyH') this.ui.toggleHUD();
       if (code === 'KeyL') { this.terrain.setDebug(!this.terrain.debug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
@@ -227,10 +283,15 @@ export class Game {
         this.updateURL();
         this.ui.toast(this.npcsEnabled ? 'People return to the world' : 'People hidden — the world still streams');
       }
-      // Conversation replies: number keys choose a topic, Escape steps back.
-      if (this.npcs.conversationView) {
-        if (code === 'Escape') this.endDialogue();
-        else if (/^Digit[1-4]$/.test(code)) this.selectDialogueTopic(Number(code.slice(5)) - 1);
+      // Escape: the interface owns it while a menu is open (settings → pause →
+      // world); otherwise a conversation closes, or the pause menu opens.
+      if (code === 'Escape') {
+        if (this.ui.overlay === 'none') {
+          if (this.npcs.conversationView) this.endDialogue();
+          else this.ui.togglePause();
+        }
+      } else if (this.npcs.conversationView && /^Digit[1-4]$/.test(code)) {
+        this.selectDialogueTopic(Number(code.slice(5)) - 1);
       }
       if (code === 'KeyV') { this.vegetation.setEnabled(!this.vegetation.vegetationEnabled); this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled); this.updateURL(); }
       if (code === 'KeyT') { this.toggleTour(); this.ui.dismissIntro(); }
@@ -338,6 +399,9 @@ export class Game {
 
   private frame(timestamp: number): void {
     if (this.disposed || document.hidden) return;
+    if (this.paused) { this.renderPaused(); return; }
+    // Keys pressed behind a menu or the title screen must never move the player.
+    if (this.ui.overlay !== 'none') this.input.clear();
     try {
       this.loop.tick(timestamp, (dt) => {
         if (!this.ready) return;
@@ -379,6 +443,7 @@ export class Game {
         this.objects.update(dt, focus, this.origin.absolute, alpha);
         this.npcs.update(dt, focus, this.origin.absolute, alpha);
         this.ui.setDialogue(this.npcs.conversationView);
+        this.updateAudio(dt, focus);
         this.origin.toLocal(focus, this.localPosition);
         if (this.ready) this.sky.update(dt, this.localPosition, this.activeCamera);
         const fog = this.scene.fog as Fog;
@@ -437,6 +502,10 @@ export class Game {
           entityFull: worldStats.entities.full, entityReduced: worldStats.entities.reduced,
           entityBackground: worldStats.entities.background, entityDormant: worldStats.entities.dormant,
           physicsProps: worldStats.props,
+          audioState: this.audio.state, audioVoices: this.audio.stats().voices,
+          audioCapacity: this.audio.stats().capacity, audioDropped: this.audio.stats().dropped,
+          audioZone: dominantZone(this.audioDirector.zoneWeights),
+          audioSteps: this.audioDirector.stepCount,
         }, timestamp);
       });
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
@@ -646,7 +715,7 @@ export class Game {
     this.world.setReady(false);
     this.resetVersion++;
     this.scene.userData.ready = false;
-    this.input.clear(); this.ui.beginLoading(); this.loop.reset();
+    this.input.clear(); this.ui.beginLoading(); this.ui.setMenuStatus('Generating a new world…'); this.loop.reset();
   }
 
   private changeSeed(seed: string): void {
@@ -756,6 +825,143 @@ export class Game {
     catch { this.ui.toast('Copy the address bar to share this exact world and viewpoint'); }
   }
 
+
+  /* ---- Phase 12: audio, menus and preferences ----------------------------- */
+
+  /**
+   * Render the frozen scene while paused. Simulation, streaming and audio are all
+   * stopped; only the picture stays, so resuming is instant and lossless.
+   */
+  private renderPaused(): void {
+    if (!this.ready) return;
+    this.post.setCamera(this.activeCamera);
+    this.post.render(this.scene, this.activeCamera);
+  }
+
+  /** First user gesture unlocks Web Audio (autoplay policy); never requested twice. */
+  private bindAudioUnlock(): void {
+    if (this.audioUnlockBound) return;
+    this.audioUnlockBound = true;
+    // Keep listening until the context actually runs: a blocked or interrupted
+    // resume (device sleep, tab switch) is retried on the next gesture.
+    const unlock = () => {
+      void this.audio.resume().then(() => {
+        if (this.audio.state !== 'running') return;
+        window.removeEventListener('pointerdown', unlock);
+        window.removeEventListener('keydown', unlock);
+      });
+    };
+    window.addEventListener('pointerdown', unlock, { signal: this.abort.signal });
+    window.addEventListener('keydown', unlock, { signal: this.abort.signal });
+  }
+
+  /** Overlay changes are the single source of truth for pausing and pointer lock. */
+  private handleOverlay(overlay: string): void {
+    const paused = overlay === 'pause';
+    if (paused !== this.paused) this.setPaused(paused);
+    if (overlay !== 'none') {
+      this.input.clear();
+      if (document.pointerLockElement) document.exitPointerLock();
+    }
+  }
+
+  private setPaused(paused: boolean): void {
+    this.paused = paused;
+    this.input.clear();
+    this.loop.reset();
+    this.audioDirector.setPaused(paused);
+    // Silence and suspend while paused: a frozen world should not hum.
+    if (paused) void this.audio.suspend();
+    else void this.audio.resume();
+  }
+
+  private setVolume(bus: 'master' | 'ambience' | 'effects' | 'ui', value: number): void {
+    const audio = { ...this.preferences.audio, [bus]: Math.max(0, Math.min(1, value)) };
+    this.preferences = { ...this.preferences, audio };
+    this.audioDirector.setSettings(audio);
+    this.ui.syncAudio(audio);
+    savePreferences(this.preferences);
+  }
+
+  private setMuted(muted: boolean): void {
+    const audio = { ...this.preferences.audio, muted };
+    this.preferences = { ...this.preferences, audio };
+    this.audioDirector.setSettings(audio);
+    this.ui.syncAudio(audio);
+    savePreferences(this.preferences);
+    this.ui.toast(muted ? 'Sound muted — captions stay on if enabled' : 'Sound on');
+  }
+
+  private setCaptionsEnabled(enabled: boolean): void {
+    const audio = { ...this.preferences.audio, captions: enabled };
+    this.preferences = { ...this.preferences, audio };
+    this.audioDirector.setSettings(audio);
+    applyPreferences(this.preferences, document.documentElement);
+    this.ui.syncAudio(audio);
+    savePreferences(this.preferences);
+    if (!enabled) this.ui.setCaptions([]);
+  }
+
+  private setAccessibility(key: keyof AccessibilityPreferences, value: boolean): void {
+    const accessibility = { ...this.preferences.accessibility, [key]: value };
+    this.preferences = { ...this.preferences, accessibility };
+    applyPreferences(this.preferences, document.documentElement);
+    this.ui.syncPreferences(accessibility);
+    savePreferences(this.preferences);
+    if (key === 'reducedMotion') {
+      this.vegetation.setWind(!value);
+      if (value) {
+        this.motionRestore = { cycling: this.sky.cycling, touring: this.rig.touring };
+        this.sky.cycling = false;
+        this.rig.touring = false;
+      } else if (this.motionRestore) {
+        this.sky.cycling = this.motionRestore.cycling;
+        this.rig.touring = this.motionRestore.touring;
+        this.motionRestore = null;
+      }
+      this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
+      this.ui.syncTime(this.sky.hour, this.sky.cycling);
+    }
+    if (key === 'interactionHold') {
+      this.interaction.setHoldToConfirm(value);
+      this.ui.toast(value ? 'Hold to confirm interactions' : 'Single press interactions');
+    }
+  }
+
+  /** Feed the audio director from the same state the renderer and HUD use. */
+  private updateAudio(dt: number, focus: Vector3): void {
+    if (!this.ready) return;
+    this.captionClock += dt;
+    const onFoot = this.mode === 'character' && this.character.ready;
+    const character = this.character.snapshot();
+    const frame: AudioFrame = {
+      player: { x: focus.x, y: focus.y, z: focus.z },
+      yaw: onFoot ? this.character.cameraRig.yaw : this.rig.yaw,
+      // The survey camera never makes footstep sounds; it has no feet.
+      speed: onFoot ? character.speed : 0,
+      verticalSpeed: onFoot ? character.verticalSpeed : 0,
+      grounded: !onFoot || character.grounded,
+      stance: onFoot ? character.stance : 'stand',
+      swimming: onFoot && character.swimming,
+      surface: this.queries.surface(focus.x, focus.z),
+      biome: this.terrain.biomeAt(focus.x, focus.z) as BiomeId,
+      altitude: focus.y,
+      hour: this.sky.hour,
+      windEnabled: this.vegetation.windEnabled,
+    };
+    this.audioDirector.update(dt, frame);
+    this.ui.setCaptions(this.captions.list(this.captionClock));
+  }
+
+  /** Resolve an event's world id to a position so its sound can be panned. */
+  private locateSoundSource(id: string): { x: number; y: number; z: number } | undefined {
+    const npc = this.npcs?.list().find((entry) => entry.id === id);
+    if (npc) return { x: npc.x, y: npc.y, z: npc.z };
+    const object = this.objects?.list().find((entry) => entry.id === id);
+    if (object) return { x: object.x, y: object.y, z: object.z };
+    return undefined;
+  }
+
   private fail(error: Error): void {
     console.error('[Wayfarer]', error);
     this.ready = false;
@@ -795,6 +1001,8 @@ export class Game {
       inventory: { stacks: this.inventory.stacks(), total: this.inventory.total },
       interaction: { targetId: this.interaction.targetId, prompt: this.interaction.currentPrompt, providers: this.interaction.providerCount },
       objectsEnabled: this.objectsEnabled,
+      paused: this.paused, overlay: this.ui.overlay, preferences: this.preferences,
+      audio: { ...this.audio.stats(), steps: this.audioDirector.stepCount },
       touring: this.rig.touring, speed: this.rig.velocity.length(),
       fps: this.loop.fps, drawCalls: this.context.renderer.info.render.drawCalls,
       gpuBytes: this.context.renderer.info.memory.total };
@@ -810,6 +1018,7 @@ export class Game {
     this.physicsDebug?.dispose();
     this.physics?.dispose();
     this.character.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
+    this.audioDirector?.dispose(); this.audio?.dispose();
     this.npcs.dispose(); this.objects.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
     clearObjectGeometryCache();
     this.context.renderer.dispose(); this.context.canvas.remove();

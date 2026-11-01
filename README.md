@@ -1,10 +1,10 @@
 # Wayfarer — Infinite Open-World Game
 
-**Phases 1–6 and 8 combined: a seeded, infinite world you can walk, inspect, touch and share with other people.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
+**Phases 1–6, 8 and 12 combined: a seeded, infinite world you can walk, hear, inspect, touch and share with other people.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, synthesised spatial audio with ambience zones, a title/pause menu shell with a real mix and accessibility options, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
 
 Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers and Rapier 3D.
 
-> This branch merges the Phase 4 (engine/physics), Phase 5 (playable character), Phase 6 (objects/interaction) and Phase 8 (NPCs & life simulation) lines. Buildings/interiors (Phase 7) are being built on a separate line; vehicles, water, audio, missions and the story layer remain later phases — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> This branch merges the Phase 4 (engine/physics), Phase 5 (playable character), Phase 6 (objects/interaction), Phase 8 (NPCs & life simulation) and Phase 12 (audio/UX/accessibility) lines. Buildings/interiors (Phase 7) are being built on a separate line; water and weather (9), vehicles (10), discovery/gameplay infrastructure (11) and the story layer remain later phases — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Quick start
 
@@ -18,7 +18,7 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 242 unit/integration tests across 25 files
+npm test              # 300 unit/integration tests across 29 files
 npm run test:browser  # 23 Playwright browser tests (requires Chromium)
 ```
 
@@ -63,6 +63,8 @@ npx playwright install chromium
 
 | Input | Action |
 |---|---|
+| Esc | Pause (from the world) / step out of settings |
+| Tab / Shift+Tab | Move focus inside the open dialog |
 | 1–4 | Pick a conversation topic (while talking) |
 | R | Reset viewpoint / return to spawn |
 | P | Pause/resume day cycle |
@@ -76,9 +78,23 @@ npx playwright install chromium
 | K | Physics collider wireframes (developer) |
 | X | Drop a physics test crate (developer, while using the Rapier sandbox) |
 
-The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, and a shareable world link.
+The title screen exposes the world seed (with a random-seed button), the graphics preset and a shareable link before you commit to a walk. The pause menu (`Esc`) freezes the simulation and the audio and offers resume, settings, copy link, mute, restart and back-to-title, plus a controls list.
+
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, a shareable world link, a four-bus sound mix (master / ambience / world & footsteps / interface, mute, sound captions) and accessibility controls (reduce motion, high contrast, larger interface text, hold-to-confirm). Preferences persist locally under `wayfarer.preferences` and apply immediately.
 
 Share URLs include `seed`, player position, `hour`, `quality`, `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `npcs=0|1`, `postfx=0|1`, `physics=0`, `route=cedar|golden|snowline` and an optional `character=<glb-url>`.
+
+## What Phase 12 adds
+
+- **Synthesised spatial audio, no samples:** 27 procedural sound recipes built from one generated noise buffer and oscillators, rendered through ambience/effects/UI buses into a master limiter — the repository ships no audio files at all.
+- **Budgeted voices:** 24 simultaneous voices with per-bus caps (4/16/6). The mixer steals the weakest lower-priority voice and counts every refusal, so a crowd cannot blow the audio budget; state, voice count, capacity, drops, dominant zone and step count are reported in the performance overlay.
+- **Ambience zones:** wind, foliage, ridge and hush beds derived from biome cover, altitude exposure, time of day and the wind setting, resampled at 4 Hz and cross-faded over 2.5 s, with a short transition cue and caption.
+- **Footsteps and landings from real motion:** distance-cadenced steps on the actual `SurfaceKind` underfoot (grass, gravel, rock, snow, hard, wood, metal, water), stance-dependent stride and loudness, soft/hard landings from impact speed, and swim splashes — with no new coupling to gameplay.
+- **Spatial events:** object interactions and NPC conversations play through typed events with distance attenuation and stereo pan, resolved to canonical world positions.
+- **A real front end:** a title screen (seed, preset, enter, settings, share), a pause menu that freezes simulation *and* suspends the audio context, a settings dialog that returns where it came from, focus trapping, `inert` HUD while paused, and keyboard-free cheating of the simulation while a menu is open.
+- **Accessibility as a feature:** sound captions in a polite live region, high contrast, larger interface text, reduce motion (also honoured automatically from the OS setting) and hold-to-confirm interactions, all persisted and applied without a reload.
+
+See [docs/PHASE12.md](docs/PHASE12.md) for the audio graph, mixing policy, zones, menu transitions, preferences and validation.
 
 ## What Phase 8 adds
 
@@ -175,13 +191,16 @@ src/
                           viewpoints, sky, world query services
   rendering/              renderer factory, post-processing (GTAO/bloom/FXAA), terrain,
                           road, object and prop materials/geometry, surface/foliage textures
-  ui/                     HUD/settings shell and styles
+  audio/                  sound vocabulary, recipes, mixer policy, ambience zones,
+                          footstep cadence, Web Audio engine, audio director
+  ui/                     HUD/settings shell, menu state machine, preferences,
+                          captions and styles
   workers/                terrain worker entry
   utils/                  seeded RNG and math
 tests/                    unit, integration + browser regression tests
 ```
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the open-world plan and the Phase 4/6/8 contracts later phases must honour, [docs/PHASE8.md](docs/PHASE8.md) for the NPC population, navigation, perception and behaviour states, [docs/PHASE6.md](docs/PHASE6.md) for interactive objects and persistence, [docs/PHASE5.md](docs/PHASE5.md) for the playable character, [docs/PHASE4.md](docs/PHASE4.md) for the engine and physics, [docs/PHASE3.md](docs/PHASE3.md) for roads/routes/props, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE1.md](docs/PHASE1.md) for the world foundation.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the open-world plan and the Phase 4/6/8/12 contracts later phases must honour, [docs/PHASE12.md](docs/PHASE12.md) for audio, menus and accessibility, [docs/PHASE8.md](docs/PHASE8.md) for the NPC population, navigation, perception and behaviour states, [docs/PHASE6.md](docs/PHASE6.md) for interactive objects and persistence, [docs/PHASE5.md](docs/PHASE5.md) for the playable character, [docs/PHASE4.md](docs/PHASE4.md) for the engine and physics, [docs/PHASE3.md](docs/PHASE3.md) for roads/routes/props, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE1.md](docs/PHASE1.md) for the world foundation.
 
 ## Merge notes
 
@@ -206,9 +225,10 @@ The phase lines were developed against the same Phase 3 base, so this branch rec
 - Interactive objects stream in canonical 512 m cells with per-preset budgets (28/56/88/128) and prop body caps (20/40/64/96); prop bodies sleep when settled.
 - NPCs stream in canonical 512 m cells with per-preset population budgets (8/14/20/28) and pooled rig caps (2/4/6/8); full-fidelity NPCs (≤ 95 m) think on the fixed step, reduced (≤ 230 m) at ~15 Hz, background (≤ 640 m) only reschedule. A* is globally capped at 8 searches/second with a 1200-expansion ceiling and a 6000-node cache.
 - Chunk geometry, materials, instance buffers, textures and object geometry caches are disposed on eviction, seed change, quality change, and teardown.
-- The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, instanced batch count, physics bodies/colliders/step time, streamed ground colliders, entity simulation levels, object counts, prop bodies and the interaction target.
-- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The merged branch was verified with `tsc --noEmit`, `npm run build` and 242 unit/integration tests across 25 files; run `npm run test:browser` on a machine with Chromium for the end-to-end pass.
+- Audio is hard-capped at 24 voices (per-bus 4/16/6) with a single shared 2-second generated noise buffer; ambience decisions run at 4 Hz, footsteps are distance-driven, and a paused game suspends the audio context entirely.
+- The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, instanced batch count, physics bodies/colliders/step time, streamed ground colliders, entity simulation levels, object counts, prop bodies, the interaction target, and audio state/voices/capacity/drops/zone/steps.
+- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The merged branch was verified with `tsc --noEmit`, `npm run build` and 300 unit/integration tests across 29 files; run `npm run test:browser` on a machine with Chromium for the end-to-end pass.
 
 ## Assets and licenses
 
-No paid assets. Terrain, sky, stars, moon, biomes, surface/road textures, vegetation, cliffs, road signs, props, objects and materials are procedural. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed; Rapier 3D is Apache-2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+No paid assets. Terrain, sky, stars, moon, biomes, surface/road textures, vegetation, cliffs, road signs, props, objects, materials and **all sound** are procedural — audio is synthesised at runtime from a generated noise buffer and oscillators, so there are no sample files or licences. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed; Rapier 3D is Apache-2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

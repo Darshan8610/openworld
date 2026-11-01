@@ -364,8 +364,9 @@ Run `npm run test:browser` on a machine with Chromium.
 * **No indoor navigation.** Phase 7 (buildings) is a separate work line; NPCs path
   around solid objects via `NavigationBlockers` but cannot enter interiors or use
   stairs yet.
-* **No audio.** Footsteps and voice belong to Phase 12; the events needed
-  (`npc:behaviourChanged`, conversations) already exist.
+* **No voice audio.** Phase 12 synthesises footsteps, ambience and greeting /
+  reply / farewell cues from the existing `npc:*` events; NPCs do not speak —
+  conversations remain text, and there is no speech synthesis or recorded voice.
 * **Path quality is grid-based.** 4 m nodes with string-pulling are adequate for
   verge and meadow traffic; dense props in tight spaces may still produce short
   detours rather than elegant curves.

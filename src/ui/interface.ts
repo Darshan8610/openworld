@@ -6,6 +6,12 @@ import type { InteractionPrompt } from '../interaction/types';
 import type { ConversationView } from '../npc/types';
 import { itemDefinition, isItemId } from '../objects/items';
 import type { ItemId } from '../objects/items';
+import type { AccessibilityPreferences } from './preferences';
+import { DEFAULT_AUDIO_SETTINGS } from '../audio/types';
+import type { AudioSettings } from '../audio/types';
+import { MenuState } from './menu';
+import type { Overlay } from './menu';
+import type { Caption } from './captions';
 
 export interface UIActions {
   seed: (seed: string) => void;
@@ -42,6 +48,14 @@ export interface UIActions {
   sensitivity: (value: number) => void;
   shoulder: () => void;
   respawn: () => void;
+  /** Phase 12: audio mix, accessibility, menus. */
+  volume: (bus: 'master' | 'ambience' | 'effects' | 'ui', value: number) => void;
+  mute: (muted: boolean) => void;
+  captions: (enabled: boolean) => void;
+  accessibility: (key: 'reducedMotion' | 'highContrast' | 'largeText' | 'interactionHold', value: boolean) => void;
+  restart: () => void;
+  title: () => void;
+  uiSound: (sound: 'click' | 'hover' | 'confirm' | 'back' | 'error') => void;
 }
 export interface UIStats {
   x: number; y: number; z: number; heading: number; time: string; biome: string;
@@ -63,24 +77,107 @@ export interface UIStats {
   npcActive: number; npcFull: number; npcReduced: number; npcBackground: number;
   npcRigs: number; npcRigCapacity: number; npcNearest: string | null;
   npcSearches: number; npcTruncated: boolean;
+  audioState: string; audioVoices: number; audioCapacity: number; audioDropped: number;
+  audioZone: string; audioSteps: number;
 }
+
+/** Title-screen fields: seed and preset before the world is entered. */
+/** Seeds and backend names reach the markup: escape them rather than trusting input. */
+const escapeHtml = (value: string): string =>
+  value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
+
+export function menuFieldsMarkup(seed: string, quality: QualityName): string {
+  const option = (value: QualityName, label: string) =>
+    `<option value="${value}"${value === quality ? ' selected' : ''}>${label}</option>`;
+  return `          <div class="menu-fields">
+            <label class="field-label" for="menu-seed">World seed <span>Same seed. Same world.</span></label>
+            <form id="menu-seed-form" class="seed-row"><input id="menu-seed" name="seed" maxlength="64" autocomplete="off" spellcheck="false" value="${escapeHtml(seed)}" required><button type="button" id="menu-random" aria-label="Generate random seed" title="Random seed">↻</button><button type="submit" class="apply">Apply</button></form>
+            <label class="field-label" for="menu-quality">Graphics preset</label>
+            <select id="menu-quality">${option('low', 'Low · lighter on your device')}${option('balanced', 'Balanced · recommended')}${option('high', 'High · extended horizons')}${option('ultra', 'Ultra · maximum detail + ambient occlusion')}</select>
+          </div>`;
+}
+
+/** Pause menu: the only overlay that stops simulation. */
+export function pauseMarkup(): string {
+  return `      <div class="pause" id="pause" role="dialog" aria-modal="true" aria-labelledby="pause-title" hidden>
+        <div class="pause-panel">
+          <span class="eyebrow"><i></i> SIMULATION PAUSED</span>
+          <h2 id="pause-title">Take a breath.</h2>
+          <p class="pause-note">The world is holding still — nothing is lost. Audio is muted while you are here.</p>
+          <div class="pause-actions">
+            <button class="primary" id="pause-resume">Resume <span>↩</span></button>
+            <button id="pause-settings">World settings</button>
+            <button id="pause-share">Copy world link</button>
+            <button id="pause-mute">Mute sound</button>
+            <button id="pause-restart">Restart world</button>
+            <button id="pause-title-button">Back to title</button>
+          </div>
+          <div class="pause-controls">
+            <span class="eyebrow">CONTROLS</span>
+            <ul>
+              <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</li>
+              <li><kbd>Space</kbd> jump · <kbd>Shift</kbd> sprint · <kbd>Ctrl</kbd> crouch</li>
+              <li><kbd>E</kbd> interact / talk · <kbd>1</kbd>–<kbd>4</kbd> reply</li>
+              <li><kbd>C</kbd> survey camera · <kbd>F</kbd> first person</li>
+              <li><kbd>N</kbd> people · <kbd>O</kbd> objects · <kbd>V</kbd> vegetation</li>
+              <li><kbd>F3</kbd> performance · <kbd>Esc</kbd> pause</li>
+            </ul>
+          </div>
+          <p class="pause-hint"><kbd>Esc</kbd> resume · <kbd>Tab</kbd> move focus</p>
+        </div>
+      </div>`;
+}
+
+/** Sound section of the settings panel. */
+export function audioSettingsMarkup(settings: AudioSettings): string {
+  const percent = (value: number): string => `${Math.round(value * 100)}%`;
+  const slider = (id: string, label: string, value: number): string =>
+    `<div class="field-label"><label for="${id}">${label}</label><output id="${id}-value">${percent(value)}</output></div>
+          <input id="${id}" type="range" min="0" max="1" step="0.01" value="${value}" aria-label="${label} volume">`;
+  return `          <div class="nature-heading"><span class="eyebrow">SOUND</span><span id="audio-status">SYNTHESISED · WEB AUDIO</span></div>
+          ${slider('volume-master', 'Master', settings.master)}
+          ${slider('volume-ambience', 'Ambience', settings.ambience)}
+          ${slider('volume-effects', 'World & footsteps', settings.effects)}
+          ${slider('volume-ui', 'Interface', settings.ui)}
+          <label class="switch-row" for="mute"><span>Mute all sound<small>Machine-local; nothing is downloaded</small></span><input type="checkbox" id="mute" role="switch"${settings.muted ? ' checked' : ''}></label>
+          <label class="switch-row" for="captions"><span>Sound captions<small>Text for doors, pickups and greetings</small></span><input type="checkbox" id="captions" role="switch"${settings.captions ? ' checked' : ''}></label>`;
+}
+
+/** Accessibility section of the settings panel. */
+export function accessibilitySettingsMarkup(prefs: AccessibilityPreferences): string {
+  const row = (id: string, title: string, note: string, checked: boolean): string =>
+    `<label class="switch-row" for="${id}"><span>${title}<small>${note}</small></span><input type="checkbox" id="${id}" role="switch"${checked ? ' checked' : ''}></label>`;
+  return `          <div class="nature-heading"><span class="eyebrow">ACCESSIBILITY</span><span>PHASE 12</span></div>
+          ${row('a11y-motion', 'Reduce motion', 'Stills wind, the day cycle and camera sway', prefs.reducedMotion)}
+          ${row('a11y-contrast', 'High contrast', 'Stronger text and panel edges', prefs.highContrast)}
+          ${row('a11y-text', 'Larger interface text', 'HUD, menus and panel copy', prefs.largeText)}
+          ${row('a11y-hold', 'Hold to confirm', 'Off: a single press activates', prefs.interactionHold)}`;
+}
+
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id.replace(/^#/, '')) as T;
 
 /**
  * The whole interface shell as one string. Exported so DOM integrity can be
  * tested without a browser: every id the class looks up must exist here.
  */
-export function interfaceMarkup(hour: number, backend: BackendName): string {
+export function interfaceMarkup(
+  hour: number,
+  backend: BackendName,
+  seed = '',
+  quality: QualityName = 'balanced',
+  audio: AudioSettings = DEFAULT_AUDIO_SETTINGS,
+  accessibility: AccessibilityPreferences = { reducedMotion: false, highContrast: false, largeText: false, interactionHold: true },
+): string {
   return `      <div class="shade" aria-hidden="true"></div>
       <main class="interface" id="interface">
         <header class="topbar">
           <a class="brand" href="/" aria-label="Wayfarer home"><svg viewBox="0 0 40 34" aria-hidden="true"><path d="M3 7l9 21 8-15 8 15 9-21M14 7l6 12 6-12"/></svg><span>WAYFARER<small>A WORLD WITHOUT EDGES</small></span></a>
-          <div class="top-actions"><span class="backend" id="backend"><i></i>${backend}</span><button class="icon-button" id="settings-toggle" aria-label="World settings" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg></button></div>
+          <div class="top-actions"><span class="backend" id="backend"><i></i>${escapeHtml(backend)}</span><button class="icon-button" id="settings-toggle" aria-label="World settings" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg></button></div>
         </header>
         <div class="compass" aria-label="Compass"><span>W</span><i></i><span>N</span><i></i><span>E</span><b id="heading">033°</b></div>
         <section class="intro" id="intro"><div class="eyebrow"><span></span> THE INFINITE WORLD PROJECT</div><h1>Take the
 long way home.</h1><p>No finish line. No edge of the map.
-Just you, and what’s over the next ridge.</p><button class="primary" id="explore">Explore the world <span>↗</span></button><div class="phase-note">PHASE 08 <span>·</span> A WORLD WITH PEOPLE</div></section>
+Just you, and what’s over the next ridge.</p>${menuFieldsMarkup(seed, quality)}<div class="menu-actions"><button class="primary" id="explore">Enter the world <span>↗</span></button><button class="text-button" id="menu-settings">World settings</button><button class="text-button" id="menu-share">Copy world link</button></div><p class="menu-status" id="menu-status">Preparing the terrain…</p><div class="phase-note">PHASE 12 <span>·</span> A WORLD THAT ANSWERS</div></section>
         <aside class="settings" id="settings" aria-label="World settings" hidden>
           <div class="panel-heading"><div><span class="eyebrow">MAKE IT YOURS</span><h2>World settings</h2></div><button class="icon-button" id="settings-close" aria-label="Close settings">×</button></div>
           <label class="field-label" for="seed">World seed <span>Same seed. Same world.</span></label>
@@ -122,6 +219,8 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <label class="switch-row" for="physics-debug"><span>Collider debug <kbd>K</kbd><small>Physics wireframes · developer view</small></span><input type="checkbox" id="physics-debug" role="switch"></label>
           <div class="panel-buttons"><button id="reset">Reset viewpoint</button><button id="share">Copy world link ↗</button></div>
           <div class="panel-buttons"><button id="drop-crate">Drop test crate <kbd>X</kbd></button></div>
+          ${audioSettingsMarkup(audio)}
+          ${accessibilitySettingsMarkup(accessibility)}
           <p class="panel-note">Phase 4 adds the physics engine and streamed terrain colliders, Phase 5 puts you on foot with a third-person camera and ground physics, and Phase 6 adds interactive world objects — caches, containers, gates, lamps, valves, benches and pickups — with hold-to-confirm context actions and persistent state.</p>
         </aside>
         <div class="biome-legend" id="biome-legend" hidden><span class="eyebrow">CLIMATE OVERLAY</span>${BIOMES.map((biome) => `<span><i style="background:#${biome.color.toString(16).padStart(6, '0')}"></i>${biome.name}</span>`).join('')}</div>
@@ -144,6 +243,8 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
         </div>
       </main>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <div class="captions" id="captions-feed" role="status" aria-live="polite" aria-label="Sound captions" hidden></div>
+${pauseMarkup()}
       <div class="loading" id="loading"><div class="loading-brand">WAYFARER</div><div class="loading-line"><span id="loading-progress"></span></div><p id="loading-text">Finding your next horizon…</p><span class="loading-meta">PROCEDURAL TERRAIN · SEEDED & INFINITE</span></div>
       <div class="fatal" id="fatal" hidden><span class="eyebrow">A SMALL DETOUR</span><h1>We couldn’t open this world.</h1><p id="fatal-message"></p><button class="primary" id="retry">Try again</button><button class="text-button" id="compatibility">Try WebGL2 compatibility mode</button></div>`;
 }
@@ -156,16 +257,36 @@ export class Interface {
   statsVisible = false;
   private promptKey = '';
   private dialogueKey = '';
+  /** Overlay state machine shared by the title, pause menu and settings. */
+  private readonly menu = new MenuState('title');
+  private audioSettings: AudioSettings = DEFAULT_AUDIO_SETTINGS;
+  private introDismissed = false;
+  private captionSignature = '';
+  private settingsReturnFocus: HTMLElement | null = null;
+  /** Notified whenever the overlay changes; the game pauses/resumes from this. */
+  onOverlayChange?: (overlay: Overlay) => void;
   constructor(seed: string, hour: number, quality: QualityName, backend: BackendName, actions: UIActions) {
-    $('app').insertAdjacentHTML('beforeend', interfaceMarkup(hour, backend));
+    $('app').insertAdjacentHTML('beforeend', interfaceMarkup(hour, backend, seed, quality));
     $<HTMLInputElement>('#seed').value = seed;
     $<HTMLSelectElement>('#quality').value = quality;
+    $<HTMLInputElement>('#menu-seed').value = seed;
+    $<HTMLSelectElement>('#menu-quality').value = quality;
     $('#seed-label').textContent = seed;
     const on = (id: string, event: string, fn: EventListener) => $(id).addEventListener(event, fn, { signal: this.abort.signal });
-    const settings = (open: boolean) => { $('#settings').hidden = !open; $('#settings-toggle').setAttribute('aria-expanded', String(open)); document.body.classList.toggle('settings-open', open); };
-    on('settings-toggle', 'click', () => settings($('#settings').hasAttribute('hidden')));
-    on('settings-close', 'click', () => { settings(false); $<HTMLButtonElement>('#settings-toggle').focus(); });
-    on('explore', 'click', () => { this.dismissIntro(); actions.lock(); this.toast('WASD to fly · Q descend to the roadside · E to interact · Shift to boost · Esc to release mouse'); });
+    on('settings-toggle', 'click', () => (this.menu.current === 'settings' ? this.closeSettings() : this.openSettings()));
+    on('settings-close', 'click', () => this.closeSettings());
+    on('menu-settings', 'click', () => this.openSettings());
+    on('menu-share', 'click', () => actions.share());
+    on('menu-seed-form', 'submit', (event) => { event.preventDefault(); actions.seed($<HTMLInputElement>('#menu-seed').value); });
+    on('menu-random', 'click', () => actions.randomSeed());
+    on('menu-quality', 'change', () => actions.quality($<HTMLSelectElement>('#menu-quality').value as QualityName));
+    on('explore', 'click', () => { this.enterWorld(); actions.lock(); actions.uiSound('confirm'); this.toast('WASD to move · Space to jump · E to interact · C for the survey camera · Esc to pause'); });
+    on('pause-resume', 'click', () => this.resume());
+    on('pause-settings', 'click', () => this.openSettings());
+    on('pause-share', 'click', () => actions.share());
+    on('pause-mute', 'click', () => actions.mute(!this.audioSettings.muted));
+    on('pause-restart', 'click', () => actions.restart());
+    on('pause-title-button', 'click', () => actions.title());
     on('seed-form', 'submit', (event) => { event.preventDefault(); actions.seed($<HTMLInputElement>('#seed').value); });
     on('random-seed', 'click', () => actions.randomSeed());
     on('share', 'click', () => actions.share());
@@ -204,12 +325,157 @@ export class Interface {
       $('#sensitivity-value').textContent = `${value.toFixed(2)}×`;
       actions.sensitivity(value);
     });
+    for (const [id, bus] of [['volume-master', 'master'], ['volume-ambience', 'ambience'], ['volume-effects', 'effects'], ['volume-ui', 'ui']] as const) {
+      on(id, 'input', () => {
+        const value = Number($<HTMLInputElement>(`#${id}`).value);
+        $(`#${id}-value`).textContent = `${Math.round(value * 100)}%`;
+        actions.volume(bus, value);
+      });
+    }
+    on('mute', 'change', () => actions.mute($<HTMLInputElement>('#mute').checked));
+    on('captions', 'change', () => actions.captions($<HTMLInputElement>('#captions').checked));
+    for (const [id, key] of [['a11y-motion', 'reducedMotion'], ['a11y-contrast', 'highContrast'], ['a11y-text', 'largeText'], ['a11y-hold', 'interactionHold']] as const) {
+      on(id, 'change', () => actions.accessibility(key, $<HTMLInputElement>(`#${id}`).checked));
+    }
+    // Interface feedback for every button, so menus are audible as well as visible.
+    document.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest('button');
+      if (!button || (button as HTMLButtonElement).disabled) return;
+      actions.uiSound(button.classList.contains('primary') ? 'confirm' : 'click');
+    }, { signal: this.abort.signal });
     on('shoulder', 'click', () => actions.shoulder());
     on('respawn', 'click', () => actions.respawn());
     on('retry', 'click', () => location.reload());
     on('compatibility', 'click', () => { const url = new URL(location.href); url.searchParams.set('renderer', 'webgl'); location.href = url.href; });
-    window.addEventListener('keydown', (event) => { if (event.code === 'Escape') settings(false); }, { signal: this.abort.signal });
+    window.addEventListener('keydown', (event) => {
+      if (event.code === 'Escape') this.escape();
+      if (event.code === 'Tab') this.trapFocus(event);
+    }, { signal: this.abort.signal });
     document.addEventListener('pointerlockchange', () => { document.body.classList.toggle('pointer-locked', document.pointerLockElement !== null); }, { signal: this.abort.signal });
+    // The world starts behind the title screen; the HUD is inert until entry.
+    this.applyOverlay('title');
+  }
+
+
+  /* ---- overlays and menus ------------------------------------------------- */
+
+  get overlay(): Overlay { return this.menu.current; }
+  get paused(): boolean { return this.menu.paused; }
+  get onTitle(): boolean { return this.menu.onTitle; }
+
+  /** Leave the title screen and give the world the keyboard. */
+  enterWorld(): void {
+    this.dismissIntro();
+    this.applyOverlay(this.menu.enterWorld().to);
+  }
+
+  togglePause(): void { this.applyOverlay(this.menu.togglePause().to); }
+
+  resume(): void { this.applyOverlay(this.menu.resume().to); }
+
+  openSettings(): void {
+    this.settingsReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    this.applyOverlay(this.menu.openSettings().to);
+  }
+
+  closeSettings(): void {
+    const change = this.menu.closeSettings();
+    this.applyOverlay(change.to);
+    if (change.to === 'none') this.settingsReturnFocus?.focus?.();
+  }
+
+  backToTitle(): void {
+    this.restoreIntro();
+    this.applyOverlay(this.menu.backToTitle().to);
+  }
+
+  /** Escape steps out one level; returns true when the interface consumed it. */
+  escape(): boolean {
+    if (this.menu.current === 'settings') { this.closeSettings(); return true; }
+    if (this.menu.current === 'pause') { this.resume(); return true; }
+    return false;
+  }
+
+  private applyOverlay(overlay: Overlay): void {
+    const settingsOpen = overlay === 'settings';
+    $('#settings').hidden = !settingsOpen;
+    $('#settings-toggle').setAttribute('aria-expanded', String(settingsOpen));
+    $('#pause').hidden = overlay !== 'pause';
+    // Only the pause menu hides the HUD from assistive tech. The title screen's
+    // own controls (seed, quality, Enter the world) live inside the shell, so the
+    // shell must stay interactive and exposed while it is shown.
+    const modal = overlay === 'pause';
+    const shell = $('#interface') as HTMLElement & { inert?: boolean };
+    shell.inert = modal;
+    shell.setAttribute('aria-hidden', String(modal));
+    document.body.classList.toggle('paused', overlay === 'pause');
+    document.body.classList.toggle('title-screen', overlay === 'title');
+    document.body.classList.toggle('settings-open', settingsOpen);
+    if (overlay === 'pause') $<HTMLButtonElement>('#pause-resume').focus({ preventScroll: true });
+    else if (settingsOpen) $<HTMLButtonElement>('#settings-close').focus({ preventScroll: true });
+    else if (overlay === 'none') $('#explore')?.blur?.();
+    this.onOverlayChange?.(overlay);
+  }
+
+  /** Cycle Tab inside the open overlay so focus cannot wander behind it. */
+  private trapFocus(event: KeyboardEvent): void {
+    const overlay = this.menu.current;
+    if (overlay !== 'pause' && overlay !== 'settings') return;
+    const root = $(overlay === 'pause' ? '#pause' : '#settings');
+    const focusable = [...root.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => !element.hasAttribute('disabled') && element.offsetParent !== null);
+    if (focusable.length === 0) return;
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    const active = document.activeElement as HTMLElement | null;
+    if (!event.shiftKey && (active === last || !root.contains(active))) {
+      event.preventDefault(); first.focus();
+    } else if (event.shiftKey && (active === first || !root.contains(active))) {
+      event.preventDefault(); last.focus();
+    }
+  }
+
+  /* ---- audio and accessibility state -------------------------------------- */
+
+  syncAudio(settings: AudioSettings): void {
+    this.audioSettings = settings;
+    for (const [id, value] of [['volume-master', settings.master], ['volume-ambience', settings.ambience], ['volume-effects', settings.effects], ['volume-ui', settings.ui]] as const) {
+      $<HTMLInputElement>(`#${id}`).value = String(value);
+      $(`#${id}-value`).textContent = `${Math.round(value * 100)}%`;
+    }
+    $<HTMLInputElement>('#mute').checked = settings.muted;
+    $<HTMLInputElement>('#captions').checked = settings.captions;
+    const muteButton = $('#pause-mute');
+    if (muteButton) muteButton.textContent = settings.muted ? 'Unmute sound' : 'Mute sound';
+  }
+
+  syncPreferences(preferences: AccessibilityPreferences): void {
+    $<HTMLInputElement>('#a11y-motion').checked = preferences.reducedMotion;
+    $<HTMLInputElement>('#a11y-contrast').checked = preferences.highContrast;
+    $<HTMLInputElement>('#a11y-text').checked = preferences.largeText;
+    $<HTMLInputElement>('#a11y-hold').checked = preferences.interactionHold;
+  }
+
+  /** Shown in the SOUND section: whether audio is running and how it is made. */
+  setAudioStatus(text: string): void { $('#audio-status').textContent = text; }
+
+  setMenuStatus(text: string): void { $('#menu-status').textContent = text; }
+
+  /**
+   * Sound captions. Called every frame; the DOM is only touched when the visible
+   * set changes.
+   */
+  setCaptions(captions: readonly Caption[]): void {
+    const signature = captions.map((caption) => caption.id).join(',');
+    if (signature === this.captionSignature) return;
+    this.captionSignature = signature;
+    const element = $<HTMLDivElement>('#captions-feed');
+    if (captions.length === 0) { element.hidden = true; element.textContent = ''; return; }
+    element.hidden = false;
+    element.innerHTML = captions
+      .map((caption) => `<span class="caption">${caption.text}${caption.direction ? ` <i>· ${caption.direction}</i>` : ''}</span>`)
+      .join('');
   }
 
   syncDebug(lod: boolean, biome: boolean): void {
@@ -304,14 +570,28 @@ export class Interface {
     $<HTMLInputElement>('#roads').checked = roads;
   }
 
-  dismissIntro(): void { $('#intro').classList.add('dismissed'); }
+  dismissIntro(): void {
+    if (this.introDismissed) return;
+    this.introDismissed = true;
+    $('#intro').classList.add('dismissed');
+  }
+
+  restoreIntro(): void {
+    this.introDismissed = false;
+    $('#intro').classList.remove('dismissed');
+    $<HTMLButtonElement>('#explore').focus({ preventScroll: true });
+  }
   showStats(enabled: boolean): void { this.statsVisible = enabled; $('#performance').hidden = !enabled; $<HTMLInputElement>('#show-stats').checked = enabled; }
   toggleHUD(): void { $('#interface').classList.toggle('hud-hidden'); }
   setLoading(progress: number): void {
     $('#loading-progress').style.width = `${Math.round(progress * 100)}%`;
     $('#loading-text').textContent = progress < 1 ? `Finding your next horizon… ${Math.round(progress * 100)}%` : 'Your world is ready.';
   }
-  ready(backend: BackendName): void { $('#loading').classList.add('loaded'); $('#backend').innerHTML = `<i></i>${backend}`; }
+  ready(backend: BackendName): void {
+    $('#loading').classList.add('loaded');
+    $('#backend').innerHTML = `<i></i>${backend}`;
+    this.setMenuStatus('Your world is ready. Enter whenever you like.');
+  }
   beginLoading(): void { $('#loading').classList.remove('loaded'); this.setLoading(0); }
   setSeed(seed: string): void { $<HTMLInputElement>('#seed').value = seed; $('#seed-label').textContent = seed; }
   syncTime(hour: number, cycling: boolean): void { $<HTMLInputElement>('#time').value = String(hour); $('#time-value').textContent = formatHour(hour); $<HTMLInputElement>('#cycle').checked = cycling; }
@@ -369,6 +649,8 @@ export class Interface {
       `Rigs        ${stats.npcRigs} / ${stats.npcRigCapacity} skinned NPCs`,
       `NPC paths   ${stats.npcSearches} searches${stats.npcTruncated ? ' · population budget reached' : ''}`,
       `Nearest NPC ${stats.npcNearest ?? '—'}`,
+      `Audio       ${stats.audioState} · ${stats.audioVoices}/${stats.audioCapacity} voices · ${stats.audioDropped} dropped`,
+      `Ambience    ${stats.audioZone} zone · ${stats.audioSteps} footsteps`,
       `LOD 0–5     ${stats.lod.join(' · ')}`,
     ].join('\n');
   }

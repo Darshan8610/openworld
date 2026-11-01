@@ -34,7 +34,7 @@ systems a story will later plug into.
 | **9 — Water & environment** | Lakes/rivers/ocean bodies, water shading with capability fallbacks, buoyancy via multi-point displacement, swimming/diving, splashes and wakes, weather controller (rain/snow/fog/storm) driving light, surface wetness, particles | 4, 5 |
 | **10 — Universal vehicles** | Shared vehicle interface (seats, entry/exit, camera, audio, damage, persistence) with distinct controllers: raycast-suspension road vehicles, motorcycle/bicycle balance, aircraft aerodynamics + helicopters, watercraft buoyancy/propulsion, sailing | 4, 9 |
 | **11 — Discovery & gameplay infrastructure** | World map + minimap from canonical coordinates, route calculation, waypoints, discovery/fog-of-war, save/load with versioned schemas and migration, inventory hooks, generic mission/objective/flag system on the event bus | 4–10 |
-| **12 — Audio, UX & polish** | Spatial audio with zones and mixing, footsteps/engines/weather sounds, main and pause menus, settings, accessibility, loading/recovery, presentation pass | all |
+| **12 — Audio, UX & polish** ✅ | Spatial audio with zones and mixing, procedural footsteps, main and pause menus, settings, accessibility, loading/recovery, presentation pass | all |
 | **13 — Optimisation & release** | Adaptive quality, profiling, browser matrix, memory and GPU fallback testing, long-run streaming, save validation, regression suite, production build | all |
 
 ## Phase 4 contracts that later phases must honour
@@ -84,6 +84,28 @@ These extend the Phase 4 and 6 contracts; all remain in force.
    seed, versioned and refused when the format is unknown or newer.
 8. **No story.** Conversations are functional hooks composed from live world data.
    Narrative, factions and quests mount on Phase 11.
+
+## Phase 12 contracts that later phases must honour
+
+These extend the Phase 4, 6 and 8 contracts; all remain in force.
+
+1. **One audio path.** Vehicles, weather, buildings and missions submit typed
+   `AudioPlayRequest`s through `AudioDirector`/`AudioEngine`; nothing else creates
+   an `AudioContext`, a voice or a node. Budgets are decided by `VoiceMixer`.
+2. **Sound is data.** A new sound is a `SoundId` plus a recipe (bus, priority,
+   layers, caption); ad-hoc node graphs in gameplay code are not accepted.
+3. **Overlays are one machine.** `MenuState` owns title/pause/settings visibility,
+   pause semantics and focus; new full-screen surfaces are transitions there, not
+   new booleans in the game loop.
+4. **Preferences are disposable.** `wayfarer.preferences` is versioned, clamped and
+   typed, separate from save data, and its failure is never fatal.
+5. **Accessibility is a requirement.** New cues need a caption or visual equivalent,
+   and new interactions respect the hold-to-confirm preference.
+6. **Degrade silently.** Missing Web Audio, a blocked autoplay resume, denied
+   storage or a closed context must never break simulation or input.
+7. **Engines and weather are deferred, not faked.** Phase 12 synthesises
+   footsteps, objects, conversations and ambience only; vehicle/weather audio
+   arrives with Phases 10 and 9.
 
 ## Phase 6 contracts that later phases must honour
 
