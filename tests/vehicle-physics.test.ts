@@ -1,64 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three/webgpu';
-import { Vehicle } from '../src/vehicles/vehicle';
-import { vehicleSpecOrThrow } from '../src/vehicles/catalog';
-import { airDensityAt } from '../src/vehicles/controllers/controller';
 import { magicFormula, solveTyre, LONGITUDINAL } from '../src/vehicles/tyre';
 import { torqueFraction } from '../src/vehicles/drivetrain';
 import { boxInertia, VehicleBody } from '../src/vehicles/vehicle-body';
+import { vehicleSpecOrThrow } from '../src/vehicles/catalog';
+import { makeEnv, simulate, spawn, STEP } from './helpers/vehicle-harness';
 import type { SurfaceKind } from '../src/physics/surfaces';
-import type { VehicleEnvironment, VehicleGroundSample, VehicleWaterSample } from '../src/vehicles/types';
-
-const STEP = 1 / 120;
-
-interface EnvOptions {
-  height?: number | ((x: number, z: number) => number);
-  surface?: SurfaceKind;
-  waterLevel?: number;
-  wind?: { x: number; y: number; z: number };
-  flow?: { x: number; z: number };
-}
-
-/** Analytic test world: flat or sloped ground, optional water plane and wind. */
-function makeEnv(options: EnvOptions = {}): VehicleEnvironment {
-  const { height = 0, surface = 'asphalt', waterLevel, wind = { x: 0, y: 0, z: 0 }, flow } = options;
-  const heightAt = typeof height === 'function' ? height : () => height;
-  return {
-    gravity: -9.81,
-    ground(x: number, z: number, out: VehicleGroundSample): VehicleGroundSample {
-      out.height = heightAt(x, z);
-      // Central-difference normal so slopes produce a correct contact normal.
-      const e = 0.5;
-      const dx = (heightAt(x + e, z) - heightAt(x - e, z)) / (2 * e);
-      const dz = (heightAt(x, z + e) - heightAt(x, z - e)) / (2 * e);
-      const len = Math.hypot(dx, 1, dz);
-      out.nx = -dx / len; out.ny = 1 / len; out.nz = -dz / len;
-      out.surface = surface;
-      return out;
-    },
-    water(x: number, z: number): VehicleWaterSample | undefined {
-      if (waterLevel === undefined) return undefined;
-      const bed = heightAt(x, z);
-      if (bed >= waterLevel) return undefined;
-      return {
-        surfaceY: waterLevel, nx: 0, ny: 1, nz: 0,
-        flowX: flow?.x ?? 0, flowZ: flow?.z ?? 0, depth: waterLevel - bed,
-      };
-    },
-    airDensity: airDensityAt,
-    wind,
-  };
-}
-
-function spawn(key: string, y = 0.9, yaw = 0): Vehicle {
-  const spec = vehicleSpecOrThrow(key);
-  return new Vehicle(`test-${key}`, spec, { x: 0, y, z: 0 }, yaw);
-}
-
-function simulate(vehicle: Vehicle, env: VehicleEnvironment, seconds: number): void {
-  const steps = Math.round(seconds / STEP);
-  for (let i = 0; i < steps; i++) vehicle.fixedUpdate(STEP, env);
-}
 
 describe('rigid body', () => {
   it('conserves a free body under gravity with no contacts', () => {

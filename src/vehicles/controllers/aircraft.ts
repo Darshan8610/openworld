@@ -128,9 +128,15 @@ export class AircraftController implements VehicleController {
       // liftAxis = (wind × right) gives "up" relative to the airflow.
       this.force.copy(this.tmp).cross(this.right).normalize().multiplyScalar(lift);
       this.force.addScaledVector(this.tmp, -drag);
-      this.force.addScaledVector(this.right, side);
+      // Lift and drag act through the centre of gravity and the resulting
+      // pitching moment is modelled explicitly below as Cm(α). Applying them
+      // at an offset point *as well* would count the static margin twice and
+      // drag the trim point back to zero lift.
+      body.addForce(this.force.x, this.force.y, this.force.z);
 
-      // Applied at the aerodynamic centre, so an aft centre gives real pitch stability.
+      // The fin's sideforce genuinely acts aft of the centre of gravity, so it
+      // is applied there: that offset is the weathervane couple.
+      this.force.copy(this.right).multiplyScalar(side);
       body.localPoint(aero.centre, this.point);
       body.addForceAtPoint(this.force, this.point);
 
@@ -143,13 +149,20 @@ export class AircraftController implements VehicleController {
       this.surfaceDeflection.roll = aileron * 0.35;
       this.surfaceDeflection.yaw = rudder * 0.35;
 
-      this.addBodyTorque(body, this.right, elevator * authority * aero.pitchAuthority);
+      // Sign convention: +X is right, +Y up, +Z forward, so a positive torque
+      // about `right` pitches the nose *down* and a positive torque about `up`
+      // yaws the nose *right*. Pulling back on the stick (+pitch) must raise
+      // the nose, hence the negation.
+      this.addBodyTorque(body, this.right, -elevator * authority * aero.pitchAuthority);
       this.addBodyTorque(body, this.forward, -aileron * authority * aero.rollAuthority);
-      this.addBodyTorque(body, this.up, -rudder * authority * aero.yawAuthority);
+      this.addBodyTorque(body, this.up, rudder * authority * aero.yawAuthority);
 
-      // Static stability: the tail weathervanes the aircraft into the wind.
-      this.addBodyTorque(body, this.right, -angleOfAttack * authority * aero.pitchStability);
-      this.addBodyTorque(body, this.up, -sideslip * authority * aero.yawStability);
+      // Static stability: the tail weathervanes the aircraft toward its trimmed
+      // angle of attack. Deviating nose-up must produce a nose-down (positive)
+      // moment, and positive sideslip a nose-right (positive) one — get these
+      // backwards and the aircraft is divergently unstable.
+      this.addBodyTorque(body, this.right, (angleOfAttack - aero.trimAngle) * authority * aero.pitchStability);
+      this.addBodyTorque(body, this.up, sideslip * authority * aero.yawStability);
 
       // Aerodynamic damping opposes rotation and scales with airspeed.
       const damp = q * aero.wingArea;

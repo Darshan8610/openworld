@@ -201,7 +201,7 @@ function hull(options: {
 
 const PROP_AERO = (options: { wingArea: number; maxThrust: number; mass: number; falloff?: number }): AeroSpec => ({
   wingArea: options.wingArea,
-  liftZero: 0.22, liftSlope: 5.0, stallAngle: 0.29,
+  liftZero: 0.22, liftSlope: 5.0, stallAngle: 0.29, trimAngle: 0.052,
   dragZero: 0.031, inducedDrag: 0.055, sideSlope: 1.6,
   pitchAuthority: 0.95, rollAuthority: 0.62, yawAuthority: 0.34,
   pitchDamping: 1.5, rollDamping: 0.52, yawDamping: 0.95,
@@ -212,12 +212,14 @@ const PROP_AERO = (options: { wingArea: number; maxThrust: number; mass: number;
 });
 
 const ROTOR = (options: { mass: number; hub: number; thrustRatio?: number }): RotorSpec => ({
-  maxThrust: options.mass * 9.81 * (options.thrustRatio ?? 1.7),
+  // Sustained thrust margin: real rotorcraft hold only a little over their own
+  // weight in a continuous climb, not the 1.7 a brief jump would suggest.
+  maxThrust: options.mass * 9.81 * (options.thrustRatio ?? 1.22),
   cyclicRange: 0.33, cyclicAuthority: options.mass * 1.9,
   tailAuthority: options.mass * 2.3, reactionTorque: options.mass * 0.62,
   hubHeight: options.hub, angularDamping: 0.85,
   translationalLift: 0.16, groundEffect: 0.2, groundEffectHeight: 5.5,
-  dragArea: 2.4, spoolTime: 1.6,
+  dragArea: 2.4, verticalDragArea: 13.5, spoolTime: 1.6,
 });
 
 const SUB: SubmarineSpec = { ballastRate: 0.3, ballastForce: 42_000, planeAuthority: 2800, maxDepth: 240 };
@@ -381,7 +383,7 @@ export const VEHICLE_CATALOG: readonly VehicleSpec[] = [
     seats: cabin4(0.72, 0.1, 3.2, 1.2), maxHealth: 200, fuelCapacity: 2400, fuelBurn: 0.06, topSpeed: 210, accent: 0xdfe3e8,
     wheels: tricycleGear({ noseZ: 4.6, mainZ: -0.9, halfTrack: 2.4, radius: 0.34, mass: 7400, restLength: 0.9, travel: 0.3 }),
     aero: {
-      wingArea: 28.5, liftZero: 0.14, liftSlope: 5.4, stallAngle: 0.26,
+      wingArea: 28.5, liftZero: 0.14, liftSlope: 5.4, stallAngle: 0.26, trimAngle: 0.035,
       dragZero: 0.021, inducedDrag: 0.042, sideSlope: 1.9,
       pitchAuthority: 1.15, rollAuthority: 0.9, yawAuthority: 0.4,
       pitchDamping: 1.9, rollDamping: 0.6, yawDamping: 1.2,
@@ -399,7 +401,7 @@ export const VEHICLE_CATALOG: readonly VehicleSpec[] = [
     seats: [seat('pilot', 'driver', 0, 0.05, 0.6, -0.9)], maxHealth: 50, fuelCapacity: 0, fuelBurn: 0, topSpeed: 62, accent: 0xf2f4f6,
     wheels: tricycleGear({ noseZ: 0.9, mainZ: -0.2, halfTrack: 0.5, radius: 0.18, mass: 420, restLength: 0.34, travel: 0.1 }),
     aero: {
-      wingArea: 12.4, liftZero: 0.3, liftSlope: 5.8, stallAngle: 0.3,
+      wingArea: 12.4, liftZero: 0.3, liftSlope: 5.8, stallAngle: 0.3, trimAngle: 0.068,
       dragZero: 0.011, inducedDrag: 0.025, sideSlope: 1.4,
       pitchAuthority: 0.9, rollAuthority: 0.58, yawAuthority: 0.3,
       pitchDamping: 1.4, rollDamping: 0.5, yawDamping: 0.9,
@@ -425,7 +427,7 @@ export const VEHICLE_CATALOG: readonly VehicleSpec[] = [
     centreOfMass: { x: 0, y: 0, z: 0 }, inertiaScale: 0.7,
     seats: [], maxHealth: 12, fuelCapacity: 20, fuelBurn: 0.02, topSpeed: 24, accent: 0x23282c,
     wheels: skids(0.3, 18),
-    rotor: { ...ROTOR({ mass: 18, hub: 0.14, thrustRatio: 2.6 }), spoolTime: 0.3, angularDamping: 2.4, dragArea: 0.2, groundEffectHeight: 1.4 },
+    rotor: { ...ROTOR({ mass: 18, hub: 0.14, thrustRatio: 2.6 }), spoolTime: 0.3, angularDamping: 2.4, dragArea: 0.2, verticalDragArea: 0.55, groundEffectHeight: 1.4 },
     spawn: { terrain: 'open', weight: 0.25, maxSlope: 0.3 },
   },
 

@@ -120,7 +120,14 @@ export interface AeroSpec {
   readonly pitchDamping: number;
   readonly rollDamping: number;
   readonly yawDamping: number;
-  /** Weathervane stability: restoring moment toward the relative wind. */
+  /**
+   * Angle of attack the tailplane trims to with the stick centred, radians.
+   * Without this an aircraft restores to zero AoA, where the wing cannot
+   * generate enough lift to carry its own weight, and every aircraft mushes
+   * into a permanent descent.
+   */
+  readonly trimAngle: number;
+  /** Weathervane stability: restoring moment toward the trimmed attitude. */
   readonly pitchStability: number;
   readonly yawStability: number;
   /** Maximum thrust, newtons. */
@@ -160,6 +167,12 @@ export interface RotorSpec {
   readonly groundEffectHeight: number;
   /** Parasitic drag area, m². */
   readonly dragArea: number;
+  /**
+   * Drag area presented to vertical flow, m². Much larger than the axial area
+   * — it is the fuselage plan view plus the rotor's own download — and it is
+   * what limits a helicopter's climb and descent rate to sane figures.
+   */
+  readonly verticalDragArea: number;
   /** Rotor spin-up time constant, seconds. */
   readonly spoolTime: number;
 }

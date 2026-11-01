@@ -38,7 +38,6 @@ export class HelicopterController implements VehicleController {
   private readonly up = new Vector3();
   private readonly force = new Vector3();
   private readonly relative = new Vector3();
-  private readonly tmp = new Vector3();
   private readonly ground: VehicleGroundSample = { height: 0, nx: 0, ny: 1, nz: 0, surface: 'grass' };
 
   constructor(private readonly vehicleSpec: VehicleSpec) {
@@ -103,11 +102,23 @@ export class HelicopterController implements VehicleController {
     const pedal = clamp(input.yaw, -1, 1) * rotorSpec.tailAuthority * (0.35 + 0.65 * this.rotor);
     this.addTorque(body, this.up, reaction - pedal);
 
-    // Parasitic drag and angular damping.
+    // Parasitic drag, split so vertical flow sees the much larger plan area.
+    // Treating a helicopter as isotropically streamlined lets it climb like a
+    // rocket; the vertical term is what sets a realistic rate of climb.
     if (airspeed > 0.05) {
-      const drag = 0.5 * density * rotorSpec.dragArea * airspeed * airspeed;
-      this.tmp.copy(this.relative).multiplyScalar(-drag / airspeed);
-      body.addForce(this.tmp.x, this.tmp.y, this.tmp.z);
+      const q = 0.5 * density;
+      const horizontal = Math.hypot(this.relative.x, this.relative.z);
+      const vertical = this.relative.y;
+      const dragH = q * rotorSpec.dragArea * horizontal * horizontal;
+      const dragV = q * rotorSpec.verticalDragArea * vertical * Math.abs(vertical);
+      if (horizontal > 1e-4) {
+        body.addForce(
+          (-dragH * this.relative.x) / horizontal,
+          0,
+          (-dragH * this.relative.z) / horizontal,
+        );
+      }
+      body.addForce(0, -dragV, 0);
     }
     const damping = rotorSpec.angularDamping * body.mass;
     body.addTorque(
