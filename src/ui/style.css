@@ -10,3 +10,14 @@
 
 /* Phase 2: climate inspection and nature controls. */
 .nature-heading{display:flex;align-items:center;justify-content:space-between;margin:25px 0 2px;padding-top:18px;border-top:1px solid var(--line)}.nature-heading .eyebrow{font-size:8px;letter-spacing:1.4px;color:var(--accent)}.nature-heading>span:last-child{font-size:8px;color:var(--muted);letter-spacing:1px}.biome-legend{position:absolute;left:44px;top:112px;display:flex;flex-direction:column;gap:11px;padding:17px 20px;background:rgba(15,30,33,.86);border:1px solid var(--line);border-radius:6px;backdrop-filter:blur(14px);font-size:10px;color:#e9eee5}.biome-legend>.eyebrow{font-size:8px;color:var(--accent);margin-bottom:3px}.biome-legend>span{display:flex;align-items:center;gap:9px}.biome-legend i{width:8px;height:8px;border-radius:2px}.biome-legend~.performance{top:330px}@media(max-width:600px){.biome-legend{left:21px;top:88px;font-size:9px;padding:14px}.biome-legend~.performance{top:295px}}
+
+
+/* Phase 5: the playable character and its HUD. */
+.player-state{display:flex;align-items:center;gap:9px;font-size:9px;letter-spacing:1.3px;padding:8px 12px;border:1px solid var(--line);border-radius:4px;background:#ffffff08;color:#dfe9d8;white-space:nowrap}
+.player-state i{width:4px;height:4px;border-radius:50%;background:var(--accent);flex-shrink:0}
+.player-state #player-mode{color:var(--accent)}
+body.mode-survey .player-state{display:none}
+body:not(.mode-survey) #tour{opacity:.6}
+body:not(.mode-survey) #tour:hover{opacity:1}
+#first-person:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:600px){.player-state{display:none}}
