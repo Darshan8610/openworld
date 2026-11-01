@@ -1,3 +1,4 @@
+import { vehicleWaterProvider } from '../vehicles/water-adapter';
 import { Discovery } from '../discovery/discovery';
 import { DiscoveryPanel } from '../ui/discovery-panel';
 import { GameSaveStore } from '../persistence/game-save';
@@ -12,6 +13,11 @@ import { FloatingOrigin } from './floating-origin';
 import { FixedLoop } from './fixed-loop';
 import { Input } from './input';
 import { SurveyCamera } from './survey-camera';
+import { WaterManager } from '../world/water-manager';
+import { BuoyancySolver } from '../physics/buoyancy';
+import { WeatherSystem } from '../environment/weather';
+import type { WeatherKind } from '../environment/weather';
+import { ParticleSystem } from '../effects/particles';
 import { TerrainManager } from '../world/terrain-manager';
 import { VegetationManager } from '../world/vegetation-manager';
 import { RoadManager } from '../world/road-manager';
@@ -114,6 +120,19 @@ export class Game {
   private readonly store = new ObjectStateStore();
   private inventory!: Inventory;
   private queries!: WorldQueries;
+  /** Phase 9: hydrology surface streaming, water forces, weather and particles. */
+  private water!: WaterManager;
+  private buoyancy!: BuoyancySolver;
+  private weather!: WeatherSystem;
+  private particles!: ParticleSystem;
+  /** Presentation clock for wave phase; identical driver for water and physics. */
+  private simTime = 0;
+  private weatherKind: WeatherKind = 'clear';
+  /** Countdown between swimmer wake splashes (fixed clock). */
+  private wakeTimer = 0;
+  private underwater = false;
+  private readonly cameraWorld = new Vector3();
+  private readonly wind = { x: 0, z: 0 };
   private propPhysics!: PropPhysicsWorld;
   private interaction!: InteractionManager;
   private objects!: ObjectSystem;
@@ -160,7 +179,7 @@ export class Game {
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     this.context = context; this.seed = seed; this.quality = quality;
-    this.scene.name = 'Wayfarer / integrated Phases 1–8, 10–12';
+    this.scene.name = 'Wayfarer / integrated Phases 1–12';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
     // Preferences are local and known before anything else runs, so the first
@@ -181,6 +200,7 @@ export class Game {
     this.buildGameplayLayer(seed);
     if (new URLSearchParams(location.search).get('objects') === '0') { this.objectsEnabled = false; this.objects.setEnabled(false); }
     if (new URLSearchParams(location.search).get('npcs') === '0') { this.npcsEnabled = false; this.npcs.setEnabled(false); }
+    if (new URLSearchParams(location.search).get('water') === '0') this.water.setEnabled(false);
     this.rig = new SurveyCamera(this.input, this.origin, this.terrain, this.roads);
     this.rig.position.copy(position); this.rig.previous.copy(position); this.rig.home.copy(position);
     this.origin.update(position);
@@ -194,6 +214,9 @@ export class Game {
       quality,
       reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
     });
+    // Swimming reads the same water surface the renderer draws, waves included.
+    this.character.setWater(this.water.swimQuery);
+    this.character.onEvent = (event) => this.handleCharacterEvent(event);
     this.character.spawnAt(position.x, position.z);
     let buildingStorage: BuildingStorage | undefined;
     try { buildingStorage = window.localStorage; } catch (error) { console.warn('[Buildings] Browser storage unavailable; door state is session-only.', error); }
@@ -209,8 +232,11 @@ export class Game {
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
     this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group, this.npcs.group, this.vehicles.root, this.buildings.group);
+    this.scene.add(this.water.group, this.particles.group);
     this.world = new WorldManager({
       origin: this.origin, terrain: this.terrain, vegetation: this.vegetation, roads: this.roads, events: this.worldEvents,
+      water: this.water, buoyancy: this.buoyancy,
+      condition: () => this.weather.state,
     });
     this.scene.add(this.world.props);
     this.unsubscribeOrigin = this.origin.onChange((delta) => {
@@ -221,6 +247,8 @@ export class Game {
       this.npcs.rebase(this.origin.absolute);
       this.vehicles.rebase(this.origin.absolute);
       this.buildings.rebase();
+      this.water.rebase();
+      this.particles.rebase();
       this.events.emit('world:originRebased', {
         x: this.origin.absolute.x, y: this.origin.absolute.y, z: this.origin.absolute.z, shifts: this.origin.shifts,
       });
@@ -257,6 +285,8 @@ export class Game {
       npcs: (value) => { this.npcsEnabled = value; this.npcs.setEnabled(value); this.updateURL(); },
       dialogueTopic: (index) => this.selectDialogueTopic(index),
       dialogueEnd: () => this.endDialogue(),
+      water: (value) => { this.water.setEnabled(value); this.updateURL(); },
+      weather: (value) => { this.weather.setOverride(value); this.updateURL(); },
       route: (value) => this.travelRoute(value),
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
@@ -346,6 +376,14 @@ export class Game {
       if (code === 'KeyX') this.dropCrate();
       if (code === 'KeyR') { if (this.mode === 'character') this.respawnPlayer(); else this.rig.reset(); }
 
+      if (code === 'KeyJ') { this.water.setEnabled(!this.water.isEnabled); this.ui.syncWater(this.water.isEnabled, this.weather.overridden); }
+      if (code === 'KeyN') {
+        const kinds: (WeatherKind | null)[] = [null, 'clear', 'cloudy', 'rain', 'storm', 'fog', 'snow', 'blizzard'];
+        const next = kinds[(kinds.indexOf(this.weather.overridden) + 1) % kinds.length] ?? null;
+        this.weather.setOverride(next);
+        this.ui.syncWater(this.water.isEnabled, next);
+        this.ui.toast(next ? `Weather pinned · ${next}` : 'Weather follows the front');
+      }
       if (code === 'KeyP') { this.sky.cycling = !this.sky.cycling; this.ui.syncTime(this.sky.hour, this.sky.cycling); }
       if (code === 'KeyC') this.setMode(this.mode === 'character' ? 'survey' : 'character');
       if (code === 'KeyF' && !this.rig.inspecting) { this.character.toggleFirstPerson(); this.ui.syncCamera(this.mode, this.character.isFirstPerson); }
@@ -401,6 +439,7 @@ export class Game {
     if (characterUrl) await game.character.loadAsset(characterUrl);
     game.ui.syncCamera(game.mode, game.character.isFirstPerson);
     if (building) game.buildingExperience.visit(building);
+    game.ui.syncWater(game.water.isEnabled, game.weather.overridden);
     return game;
   }
 
@@ -465,6 +504,7 @@ export class Game {
     try {
       this.loop.tick(timestamp, (dt) => {
         if (!this.ready || this.discoveryPanel.isOpen) return;
+        this.stepEnvironment(dt);
         if (this.driving) {
           // Control handover: the character is parked while driving, and the
           // vehicle is stepped on the same fixed step as everything else.
@@ -473,12 +513,16 @@ export class Game {
         else this.rig.fixedUpdate(dt);
         this.vehicles.fixedUpdate(dt, this.resolveActivePosition());
         this.buildings.fixedUpdate(dt, this.resolveActivePosition());
+        this.stepWake(dt);
         this.propPhysics.step(dt, this.groundSample);
         this.npcs.fixedUpdate(dt, this.resolveActivePosition());
         this.updateInteraction(dt);
       }, (alpha, dt) => {
         const focus = this.resolveActivePosition();
-        this.world.update(dt, focus);
+        this.cameraWorld.copy(this.activeCamera.position).add(this.origin.absolute);
+        this.world.update(dt, focus, this.cameraWorld, this.simTime);
+        this.presentEnvironment(dt);
+
         this.buildings.update(focus, dt, this.sky.hour);
         this.buildingExperience.update(timestamp);
         if (this.ready && this.ui.overlay === 'none' && this.mode === 'character') this.discovery.visit(focus);
@@ -518,8 +562,7 @@ export class Game {
         this.updateVehicleCamera(dt, this.ready ? alpha : 1);
         this.origin.toLocal(focus, this.localPosition);
         if (this.ready) this.sky.update(dt, this.localPosition, this.activeCamera);
-        const fog = this.scene.fog as Fog;
-        fog.color.copy(this.sky.horizon);
+        this.applyAtmosphere();
         this.context.renderer.info.reset();
         this.post.setCamera(this.activeCamera);
         this.post.render(this.scene, this.activeCamera);
@@ -578,9 +621,114 @@ export class Game {
           audioCapacity: this.audio.stats().capacity, audioDropped: this.audio.stats().dropped,
           audioZone: dominantZone(this.audioDirector.zoneWeights),
           audioSteps: this.audioDirector.stepCount,
+          waterEnabled: this.water.isEnabled,
+          waterTiles: worldStats.water?.tiles ?? 0,
+          waterBodies: worldStats.water?.bodiesNear ?? 0,
+          waterTriangles: worldStats.water?.triangles ?? 0,
+          waterBudget: worldStats.water?.budget ?? 0,
+          underwater: this.underwater,
+          seaState: this.weather.state.seaState,
+          weatherKind: this.weather.state.kind,
+          weatherLabel: this.weather.state.label,
+          weatherPinned: this.weather.overridden,
+          rain: this.weather.state.rain,
+          snow: this.weather.state.snow,
+          wetness: this.weather.state.wetness,
+          snowCover: this.weather.state.snowCover,
+          windSpeed: this.weather.state.windSpeed,
+          particles: this.particles.stats.active,
+          particleCapacity: this.particles.stats.capacity,
+          bodiesInWater: this.buoyancy.stats.bodiesInWater,
+          floatingBodies: this.buoyancy.stats.floating,
         }, timestamp);
       });
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
+  }
+
+  /**
+   * Swimming wake: a swimmer moving through the water trails small splashes. This
+   * runs on the fixed clock and is rate-limited by distance and time, so the pool
+   * budget is never spent on a stationary swimmer.
+   */
+  private stepWake(dt: number): void {
+    if (this.mode !== 'character' || !this.character.swimming) { this.wakeTimer = 0; return; }
+    this.wakeTimer -= dt;
+    if (this.wakeTimer > 0) return;
+    const position = this.character.position;
+    const moving = this.character.controllerSpeed > 0.8;
+    this.wakeTimer = moving ? 0.22 : 0.9;
+    const surface = this.water.surfaceAt(position.x, position.z, this.simTime);
+    if (surface === undefined) return;
+    this.particles.splash(position.x, surface, position.z, {
+      strength: moving ? 0.32 : 0.16,
+      spray: true,
+    });
+  }
+
+  /**
+   * Fixed-step environment: the weather front and the sea state the physics reads.
+   * Runs before the character and props so a body entering water this step sees
+   * the same surface elevation the renderer will draw.
+   */
+  private stepEnvironment(dt: number): void {
+    if (!this.weather || !this.queries) return;
+    this.simTime += dt;
+    const focus = this.resolveActivePosition();
+    const climate = this.queries.climateAt(focus.x, focus.z);
+    const weather = this.weather.update(dt, this.sky.hour, focus.x, focus.z, {
+      temperature: climate.temperature,
+      moisture: climate.moisture,
+      height: this.queries.height(focus.x, focus.z),
+    });
+    this.queries.field.water.setActivity(weather.seaState);
+    this.weather.windVector(this.wind);
+    this.vehicles.environment.setWind(this.wind.x, 0, this.wind.z);
+    if (weather.kind !== this.weatherKind) {
+      const previous = this.weatherKind;
+      this.weatherKind = weather.kind;
+      this.events.emit('world:weatherChanged', { kind: weather.kind, label: weather.label, previous });
+      if (previous === 'clear' && weather.kind !== 'clear') {
+        this.ui?.toast(`Weather turning · ${weather.label.toLowerCase()}`);
+      }
+    }
+  }
+
+  /** Per-frame presentation: sky, water shading, precipitation and splash state. */
+  private presentEnvironment(dt: number): void {
+    if (!this.weather || !this.water) return;
+    const state = this.weather.state;
+    this.sky.setWeather(state);
+    this.weather.windVector(this.wind);
+    this.water.material.setActivity(state.seaState);
+    this.water.material.setRain(state.rain);
+    this.water.material.setWind(this.wind.x * 0.35, this.wind.z * 0.35);
+    this.water.material.setSun(this.sky.sunDirection, this.sky.sun.color, this.sky.sun.intensity);
+    this.particles.setPrecipitation(state.rain, state.snow);
+    this.particles.update(dt, this.cameraWorld, this.wind.x, this.wind.z);
+    this.underwater = this.water.isUnderwater;
+    // The sky is hidden from below the waterline; the surface and fog take over.
+    this.sky.group.visible = !this.underwater;
+  }
+
+  /**
+   * Atmosphere: fog follows the weather's visibility, and the camera going under
+   * the surface switches to a short, tinted water fog. One place decides this, so
+   * the fog can never disagree with the wave surface the player is inside.
+   */
+  private applyAtmosphere(): void {
+    const fog = this.scene.fog as Fog;
+    const viewDistance = QUALITY[this.quality].viewDistance;
+    if (this.underwater) {
+      const water = CONFIG.water.underwater;
+      fog.color.setRGB(water.tintR, water.tintG, water.tintB);
+      fog.near = 0.2;
+      fog.far = Math.max(18, viewDistance * water.fogScale);
+      return;
+    }
+    fog.color.copy(this.sky.horizon);
+    const scale = this.weather?.state.fogScale ?? 1;
+    fog.far = viewDistance * scale;
+    fog.near = fog.far * 0.36;
   }
 
   /**
@@ -622,6 +770,7 @@ export class Game {
    * system holds queries for exactly one world.
    */
   private buildGameplayLayer(seed: string): void {
+    this.simTime = 0;
     const restored = this.store.load(seed);
     let saved: PersistedObjects = {};
     let inventory: readonly ItemStack[] = [];
@@ -635,6 +784,17 @@ export class Game {
     this.inventory = new Inventory(this.events);
     if (inventory.length > 0) this.inventory.restore(inventory);
     this.queries = new WorldQueries(seed);
+    // One water field per world: terrain carving (workers use their own instance
+    // of the same deterministic field), queries, rendering and physics all read it.
+    const waterField = this.queries.field.water;
+    this.water = new WaterManager(waterField, this.origin, this.quality);
+    this.buoyancy = new BuoyancySolver(waterField);
+    this.weather = new WeatherSystem(seed, { override: this.weatherOverrideFromURL() });
+    this.particles = new ParticleSystem(this.origin, QUALITY[this.quality].particleBudget);
+    this.particles.setColliders(
+      (x, z) => this.queries.height(x, z),
+      (x, z) => waterField.sampleAt(x, z)?.surfaceY,
+    );
     this.propPhysics = new PropPhysicsWorld({ maxBodies: QUALITY[this.quality].physicsBodies, fixedStep: CONFIG.physics.fixedStep });
     this.interaction = new InteractionManager({
       inventory: this.inventory,
@@ -683,9 +843,11 @@ export class Game {
       savedState: npcState,
     });
     this.npcs.setEnabled(this.npcsEnabled);
+    this.attachWaterForces();
     const vehicleSave = this.vehicleStore.load(seed);
     if (vehicleSave.status === 'invalid') console.warn('[Wayfarer] vehicle save ignored:', vehicleSave.reason);
     this.vehicles = new VehicleSystem({ seed, queries: this.queries, events: this.events, interaction: this.interaction,
+      water: vehicleWaterProvider(waterField, () => this.simTime),
       ...(vehicleSave.status === 'ok' ? { savedState: vehicleSave.save.vehicles } : {}) });
   }
 
@@ -744,6 +906,48 @@ export class Game {
     if (camera.fov !== pose.fov) { camera.fov = pose.fov; camera.updateProjectionMatrix(); }
   }
 
+  /**
+   * Prop bodies get their water forces from the shared solver, applied inside the
+   * prop solver's own substep loop. Re-attached whenever the gameplay layer is
+   * rebuilt for a new seed/quality.
+   */
+  private attachWaterForces(): void {
+    const solver = this.buoyancy;
+    const time = () => this.simTime;
+    this.propPhysics.forceField = (body, dt) => solver.applyToPropBody(body, dt, time());
+    // A prop that crosses the waterline throws a splash scaled by impact speed.
+    solver.onEntry = (entry) => {
+      const strength = Math.min(2.2, 0.35 + entry.speed * 0.3);
+      this.particles?.splash(entry.x, entry.y, entry.z, { strength });
+      this.events.emit('world:propEnteredWater', {
+        id: entry.id, bodyId: entry.bodyId, x: entry.x, y: entry.y, z: entry.z, speed: entry.speed,
+      });
+    };
+  }
+
+  /** `?weather=fog` pins a condition; any other value lets the front roam. */
+  private weatherOverrideFromURL(): WeatherKind | null {
+    const value = new URLSearchParams(location.search).get('weather');
+    if (!value || value === 'auto') return null;
+    const kinds: WeatherKind[] = ['clear', 'partly-cloudy', 'cloudy', 'overcast', 'rain', 'heavy-rain', 'storm', 'fog', 'snow', 'blizzard', 'windy'];
+    return kinds.includes(value as WeatherKind) ? value as WeatherKind : null;
+  }
+
+  /** Character events that water owns: splashes and the entry/exit events. */
+  private handleCharacterEvent(event: { type: string }): void {
+    if (event.type === 'character/water-entered') {
+      const position = this.character.position;
+      this.particles?.splash(position.x, position.y + 0.4, position.z, { strength: 1.4 });
+      const sample = this.queries?.field.water.sampleAt(position.x, position.z);
+      this.events.emit('player:enteredWater', { x: position.x, y: position.y, z: position.z });
+      if (sample) this.events.emit('world:waterEntered', { bodyId: sample.bodyId, kind: sample.kind, x: position.x, y: position.y, z: position.z });
+    } else if (event.type === 'character/water-exited') {
+      const position = this.character.position;
+      this.particles?.splash(position.x, position.y + 0.2, position.z, { strength: 0.7, spray: true });
+      this.events.emit('player:exitedWater', { x: position.x, y: position.y, z: position.z });
+    }
+  }
+
   /** Swap the whole gameplay layer when the world seed changes. */
   private rebuildGameplayLayer(seed: string): void {
     this.saveDirty = false;
@@ -754,8 +958,12 @@ export class Game {
     this.npcs.dispose();
     this.vehicles.dispose();
     this.scene.remove(this.vehicles.root);
+    this.water?.dispose(); this.particles?.dispose();
     this.buildGameplayLayer(seed);
     this.scene.add(this.objects.group, this.npcs.group, this.vehicles.root);
+    this.scene.add(this.water.group, this.particles.group);
+    this.character.setWater(this.water.swimQuery);
+    this.world.setWater(this.water); this.world.setBuoyancy(this.buoyancy);
     this.ui.syncObjects(this.objects.objectsEnabled);
     this.ui.syncNpcs(this.npcs.isEnabled);
     this.ui.setDialogue(null);
@@ -936,6 +1144,15 @@ export class Game {
     this.objects.setQuality(quality);
     this.npcs.setQuality(quality);
     this.ui.syncNpcs(this.npcs.isEnabled);
+    this.water.setQuality(quality);
+    // Particle buffers are preset-sized; dispose and replace when budgets change.
+    this.particles.dispose();
+    this.particles = new ParticleSystem(this.origin, QUALITY[quality].particleBudget);
+    this.particles.setColliders(
+      (x, z) => this.queries.height(x, z),
+      (x, z) => this.queries.field.water.sampleAt(x, z)?.surfaceY,
+    );
+    this.scene.add(this.particles.group);
     this.propPhysics.setCapacity(QUALITY[quality].physicsBodies);
     this.ui.syncPost(this.post.isEnabled);
     this.ui.syncCamera(this.mode, this.character.isFirstPerson);
@@ -1000,6 +1217,9 @@ export class Game {
     url.searchParams.set('roads', this.roads.roadsEnabled ? '1' : '0');
     url.searchParams.set('objects', this.objectsEnabled ? '1' : '0');
     url.searchParams.set('npcs', this.npcsEnabled ? '1' : '0');
+    if (this.water) url.searchParams.set('water', this.water.isEnabled ? '1' : '0');
+    if (this.weather?.overridden) url.searchParams.set('weather', this.weather.overridden);
+    else url.searchParams.delete('weather');
     if (this.rig.routeFollowing) { const route = SCENIC_ROUTES.find((r) => r.corridor === this.rig.routeCorridor); if (route) url.searchParams.set('route', route.id); else url.searchParams.delete('route'); } else url.searchParams.delete('route');
     url.searchParams.set('postfx', this.post.isEnabled ? '1' : '0');
     if (this.world.isEnabled) url.searchParams.delete('physics'); else url.searchParams.set('physics', '0');
@@ -1192,6 +1412,11 @@ export class Game {
       objects: { ...this.objects.stats, list: this.objects.list() },
       npcs: { ...this.npcs.stats, list: this.npcs.list(), conversation: this.npcs.conversationView },
       physics: this.propPhysics.stats,
+      water: { ...this.water.stats, seaState: this.queries.field.water.seaState, bodies: this.queries.field.water.cachedBasins },
+      weather: this.weather.snapshot(),
+      particles: this.particles.stats,
+      buoyancy: this.buoyancy.stats,
+      underwater: this.underwater,
       inventory: { stacks: this.inventory.stacks(), total: this.inventory.total },
       interaction: { targetId: this.interaction.targetId, prompt: this.interaction.currentPrompt, providers: this.interaction.providerCount },
       objectsEnabled: this.objectsEnabled,
@@ -1216,6 +1441,7 @@ export class Game {
     this.character.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
     this.audioDirector?.dispose(); this.audio?.dispose();
     this.vehicles.dispose(); this.npcs.dispose(); this.objects.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
+    this.water.dispose(); this.particles.dispose();
     clearObjectGeometryCache();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }

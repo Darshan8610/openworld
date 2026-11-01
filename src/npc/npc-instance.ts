@@ -286,6 +286,7 @@ export class NpcInstance implements NpcAgent, InteractionProvider, CharacterSamp
     }
 
     this.brain.tick(dt, hour);
+    this.activity = this.brain.activity;
     this.stepMotion(dt);
     this.updateCentre();
   }

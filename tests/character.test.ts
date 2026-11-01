@@ -228,6 +228,17 @@ describe('character motion solver', () => {
     expect(motion.position.y).toBeLessThan(neutral + 0.3);
   });
 
+  it('stops diving at the bed instead of swimming through it', () => {
+    const deep = new TestTerrain(() => -20);
+    // A 3 m lake: the bed is at -3 and the control asks to dive hard.
+    const water: WaterQuery = () => ({ surfaceY: 0, flowX: 0, flowZ: 0, bedY: -3 });
+    const motion = new CharacterMotion(TUNING);
+    motion.place(0, -1, 0);
+    simulate(motion, 600, deep, () => intent({ crouch: true }), water);
+    expect(motion.position.y).toBeGreaterThanOrEqual(-3 + 0.89);
+    expect(motion.position.y).toBeLessThan(0);
+  });
+
   it('reports water entry and exit transitions once', () => {
     let inWater = true;
     const water: WaterQuery = (x) => (inWater && x < 3 ? { surfaceY: 0, flowX: 0, flowZ: 0 } : undefined);

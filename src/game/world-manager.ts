@@ -2,6 +2,9 @@ import { BoxGeometry, Group, Mesh, MeshStandardNodeMaterial, Vector3 } from 'thr
 import type { FloatingOrigin } from '../core/floating-origin';
 import type { RoadNetwork } from '../world/road-network';
 import { WorldQuery } from '../world/world-query';
+import type { GroundCondition } from '../world/world-query';
+import type { BuoyancySolver } from '../physics/buoyancy';
+import type { WaterStats } from '../world/water-manager';
 import type { GroundTile, PhysicsGroundStreamer, GroundStreamStats } from '../physics/ground-streamer';
 import type { PhysicsDebugRenderer } from '../physics/debug-renderer';
 import type { PhysicsStats, PhysicsWorld } from '../physics/physics-world';
@@ -31,12 +34,33 @@ export interface RoadStreamSource extends WorldStreamLayer {
   readonly network: RoadNetwork;
 }
 
+/**
+ * Water streaming as the manager drives it. The real implementation is
+ * `world/water-manager`; tests substitute a fake.
+ */
+export interface WaterStreamSource {
+  readonly group: { visible: boolean; name: string };
+  readonly stats: WaterStats;
+  update(dt: number, position: Vector3, cameraPosition: Vector3, time: number): void;
+  rebase(): void;
+  setEnabled(enabled: boolean): void;
+  get isEnabled(): boolean;
+  /** Water query in `WorldQuery` shape, or undefined on dry land. */
+  query(x: number, z: number): { bodyId: string; surfaceHeight: number; depth: number; flowX: number; flowZ: number } | undefined;
+}
+
 export interface WorldManagerOptions {
   origin: FloatingOrigin;
   terrain: TerrainStreamSource;
   vegetation: WorldStreamLayer;
   roads: RoadStreamSource;
   events: EventBus;
+  /** Phase 9 water surface streaming; optional so headless tests stay light. */
+  water?: WaterStreamSource;
+  /** Phase 9 water forces for rapier bodies. */
+  buoyancy?: BuoyancySolver;
+  /** Weather-owned ground state (wetness / snow cover) for the query layer. */
+  condition?: (x: number, z: number) => GroundCondition;
   registry?: EntityRegistry;
   /** Overrides for the developer physics sandbox. */
   maxSandboxProps?: number;
@@ -44,6 +68,8 @@ export interface WorldManagerOptions {
 
 export interface WorldStats {
   entities: EntityRegistryStats;
+  water?: WaterStats;
+  conditions?: GroundCondition;
   physics?: PhysicsStats;
   ground?: GroundStreamStats;
   props: number;
@@ -77,6 +103,12 @@ export class WorldManager {
   private readonly vegetation: WorldStreamLayer;
   private readonly roads: RoadStreamSource;
   private readonly maxSandboxProps: number;
+  private water?: WaterStreamSource;
+  private buoyancy?: BuoyancySolver;
+  private waterTime = 0;
+  /** Last observed floating-origin shift, so layers rebase exactly once. */
+  private lastShift = 0;
+  private conditions: GroundCondition = { wetness: 0, snowCover: 0 };
   private readonly boxGeometry = new BoxGeometry(1, 1, 1);
   private readonly boxMaterial = new MeshStandardNodeMaterial({ color: 0xa8834c, roughness: 0.82, metalness: 0.05 });
   private readonly sandboxIds: string[] = [];
@@ -94,6 +126,13 @@ export class WorldManager {
     this.events = options.events;
     this.registry = options.registry ?? new EntityRegistry();
     this.query = new WorldQuery(options.terrain, options.roads.network);
+    this.water = options.water;
+    this.buoyancy = options.buoyancy;
+    // The water field is the single authority for "is there water here".
+    if (options.water) this.query.registerWater((x, z) => options.water?.query(x, z));
+    if (options.condition) this.query.registerCondition(options.condition);
+    // Always answer with the live value; the default is dry and snow-free.
+    if (!options.condition) this.query.registerCondition(() => this.conditions);
     this.maxSandboxProps = options.maxSandboxProps ?? MAX_SANDBOX_PROPS;
     this.props.name = 'Runtime physics props';
   }
@@ -103,7 +142,50 @@ export class WorldManager {
     this.physics = physics;
     this.ground = ground;
     this.debug = debug;
+    // Water forces are applied inside Rapier's own fixed substep loop, so a
+    // floating body never depends on the render rate or on our step order.
+    this.armBuoyancy();
   }
+
+  /**
+   * Attach (or replace) the water layer. A seed/quality rebuild creates a new
+   * water field, so the query provider and the physics force field are re-armed
+   * here instead of capturing a dead instance.
+   */
+  setWater(water: WaterStreamSource | undefined): void {
+    this.water = water;
+    this.query.registerWater(water ? (x, z) => water.query(x, z) : undefined);
+  }
+
+  /** Attach (or replace) the buoyancy solver used by rapier bodies. */
+  setBuoyancy(buoyancy: BuoyancySolver | undefined): void {
+    this.buoyancy = buoyancy;
+    const physics = this.physics;
+    if (!physics) return;
+    this.armBuoyancy();
+    void physics;
+  }
+
+  private armBuoyancy(): void {
+    const physics = this.physics;
+    const solver = this.buoyancy;
+    if (!physics) return;
+    // Runs inside Rapier's own substep loop, on the physics clock, so buoyancy can
+    // never be applied twice per frame or depend on the render rate.
+    physics.preStep = solver ? (dt) => solver.applyToRapier(physics, dt, this.waterTime) : undefined;
+  }
+
+  /**
+   * Weather-owned ground state, refreshed by the environment layer. Registered as
+   * a live provider (not a snapshot) so every query sees the newest value without
+   * the environment having to re-register on each change.
+   */
+  setCondition(condition: GroundCondition): void {
+    this.conditions = condition;
+    this.query.registerCondition(() => this.conditions);
+  }
+
+  get waterManager(): WaterStreamSource | undefined { return this.water; }
 
   get physicsWorld(): PhysicsWorld | undefined { return this.physics; }
   get physicsDebug(): PhysicsDebugRenderer | undefined { return this.debug; }
@@ -119,15 +201,34 @@ export class WorldManager {
     if (this.physics) this.physics.paused = !enabled;
   }
 
-  update(dt: number, position: Vector3): void {
+  /**
+   * One deterministic order for the whole streamed world:
+   *
+   *   terrain → vegetation → roads → water → physics ground → physics
+   *   → entity streaming → entity simulation → physics-driven visual sync
+   */
+  update(dt: number, position: Vector3, cameraPosition: Vector3 = position, simulationTime?: number): void {
+    // The composition root can supply its fixed clock so loading screens and
+    // paused gameplay do not advance rendered waves ahead of swimming/vehicles.
+    this.waterTime = simulationTime ?? this.waterTime + dt;
+    // Weather-owned ground state at the player: the same answer grip, particles
+    // and the surface query use.
+    this.conditions = this.query.conditionAt(position.x, position.z);
     this.terrain.update(position, dt);
     this.vegetation.update(position, dt);
     this.roads.update(position, dt);
+    this.water?.update(dt, position, cameraPosition, this.waterTime);
     let fixedSteps = 0;
     if (this.physics && this.enabled && this.ready) {
       this.ground?.update(position, dt);
       fixedSteps = this.physics.step(dt);
       this.syncPhysicsVisuals();
+    }
+    // The floating origin may have moved during this update (character or camera).
+    // Water geometry is canonical, so a rebase only offsets its meshes.
+    if (this.origin.shifts !== this.lastShift) {
+      this.lastShift = this.origin.shifts;
+      this.water?.rebase();
     }
     this.registry.stream(position);
     this.registry.tick(dt);
@@ -137,6 +238,7 @@ export class WorldManager {
 
   /** Seed/quality reset: drop sandbox props and any streamed physics ground. */
   reset(): void {
+    this.waterTime = 0;
     this.clearSandboxProps();
     this.registry.clear();
     // Ground bodies are destroyed with everything else; bookkeeping goes first so
@@ -199,10 +301,13 @@ export class WorldManager {
     };
     if (this.physics) stats.physics = this.physics.stats;
     if (this.ground) stats.ground = this.ground.stats;
+    if (this.water) stats.water = this.water.stats;
+    stats.conditions = this.conditions;
     return stats;
   }
 
   dispose(): void {
+    if (this.physics) this.physics.preStep = undefined;
     this.clearSandboxProps();
     this.registry.clear();
     this.boxGeometry.dispose();
