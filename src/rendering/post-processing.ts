@@ -24,10 +24,27 @@ export class PostProcessing {
   private chain?: Chain;
   private chainQuality?: QualityName;
   private enabled = true;
+  private camera: Camera;
 
-  constructor(private readonly renderer: WebGPURenderer, private readonly scene: Scene, private readonly camera: Camera, quality: QualityName) {
+  constructor(private readonly renderer: WebGPURenderer, private readonly scene: Scene, camera: Camera, quality: QualityName) {
+    this.camera = camera;
     this.setQuality(quality);
   }
+
+  /**
+   * The pass node owns its camera, so a view change (walk <-> survey) rebuilds the
+   * chain for the new camera instead of rendering the world through the old one.
+   */
+  setCamera(camera: Camera): void {
+    if (this.camera === camera) return;
+    this.camera = camera;
+    const quality = this.chainQuality;
+    if (quality === undefined) return;
+    this.disposeChain();
+    if (quality !== 'low') this.chain = this.build(quality);
+  }
+
+  get activeCamera(): Camera { return this.camera; }
 
   private build(quality: QualityName): Chain {
     const preset = QUALITY[quality];

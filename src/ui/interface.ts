@@ -24,6 +24,11 @@ export interface UIActions {
   postfx: (enabled: boolean) => void;
   viewpoint: (biome: BiomeId) => void;
   stats: (enabled: boolean) => void;
+  mode: (mode: 'character' | 'survey') => void;
+  firstPerson: (enabled: boolean) => void;
+  sensitivity: (value: number) => void;
+  shoulder: () => void;
+  respawn: () => void;
 }
 export interface UIStats {
   x: number; y: number; z: number; heading: number; time: string; biome: string;
@@ -33,18 +38,18 @@ export interface UIStats {
   vegetation: number; vegetationBatches: number; vegetationCapacity: number;
   roadsEnabled: boolean; roadTiles: number; props: number; propCapacity: number;
   routeName: string | null; routeStation: number | null;
+  mode: 'character' | 'survey';
+  stance: string; animation: string; movement: string; firstPerson: boolean;
+  rigSource: string; rigJoints: number; rigClips: number;
 }
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id.replace(/^#/, '')) as T;
 
-/** Small accessible development shell. Full menus/photo/mobile UI belong to Phase 8. */
-export class Interface {
-  private abort = new AbortController();
-  private toastTimer = 0;
-  private lastUpdate = 0;
-  statsVisible = false;
-  constructor(seed: string, hour: number, quality: QualityName, backend: BackendName, actions: UIActions) {
-    $('app').insertAdjacentHTML('beforeend', `
-      <div class="shade" aria-hidden="true"></div>
+/**
+ * The whole interface shell as one string. Exported so DOM integrity can be
+ * tested without a browser: every id the class looks up must exist here.
+ */
+export function interfaceMarkup(hour: number, backend: BackendName): string {
+  return `      <div class="shade" aria-hidden="true"></div>
       <main class="interface" id="interface">
         <header class="topbar">
           <a class="brand" href="/" aria-label="Wayfarer home"><svg viewBox="0 0 40 34" aria-hidden="true"><path d="M3 7l9 21 8-15 8 15 9-21M14 7l6 12 6-12"/></svg><span>WAYFARER<small>A WORLD WITHOUT EDGES</small></span></a>
@@ -53,7 +58,7 @@ export class Interface {
         <div class="compass" aria-label="Compass"><span>W</span><i></i><span>N</span><i></i><span>E</span><b id="heading">033°</b></div>
         <section class="intro" id="intro"><div class="eyebrow"><span></span> THE INFINITE WORLD PROJECT</div><h1>Take the
 long way home.</h1><p>No finish line. No edge of the map.
-Just you, and what’s over the next ridge.</p><button class="primary" id="explore">Explore the world <span>↗</span></button><div class="phase-note">PHASE 03 <span>·</span> ROADS THROUGH THE WILD</div></section>
+Just you, and what’s over the next ridge.</p><button class="primary" id="explore">Step outside <span>↗</span></button><div class="phase-note">PHASE 05 <span>·</span> ON FOOT IN THE WILD</div></section>
         <aside class="settings" id="settings" aria-label="World settings" hidden>
           <div class="panel-heading"><div><span class="eyebrow">MAKE IT YOURS</span><h2>World settings</h2></div><button class="icon-button" id="settings-close" aria-label="Close settings">×</button></div>
           <label class="field-label" for="seed">World seed <span>Same seed. Same world.</span></label>
@@ -63,6 +68,12 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <div class="range-labels"><span>Midnight</span><span>Noon</span><span>Midnight</span></div>
           <label class="switch-row" for="cycle"><span>Let the day unfold<small>A full day in 12 minutes</small></span><input type="checkbox" id="cycle" checked role="switch"></label>
           <label class="field-label" for="quality">Graphics preset</label><select id="quality"><option value="low">Low · lighter on your device</option><option value="balanced">Balanced · recommended</option><option value="high">High · extended horizons</option><option value="ultra">Ultra · maximum detail + ambient occlusion</option></select>
+          <div class="nature-heading"><span class="eyebrow">THE PLAYER</span><span>PHASE 05</span></div>
+          <label class="switch-row" for="walk-mode"><span>Walk the world <kbd>C</kbd><small>On foot. Off: free-flight survey camera</small></span><input type="checkbox" id="walk-mode" checked role="switch"></label>
+          <label class="switch-row" for="first-person"><span>First-person camera <kbd>F</kbd></span><input type="checkbox" id="first-person" role="switch"></label>
+          <div class="field-label"><label for="sensitivity">Look sensitivity</label><output id="sensitivity-value">1.00×</output></div>
+          <input id="sensitivity" type="range" min="0.3" max="2.5" step="0.05" value="1" aria-label="Look sensitivity">
+          <div class="panel-buttons"><button id="shoulder">Swap shoulder</button><button id="respawn">Return to spawn</button></div>
           <div class="nature-heading"><span class="eyebrow">THE LIVING LANDSCAPE</span><span>05 BIOMES</span></div>
           <label class="field-label" for="biome-view">Biome overlook<span>Seed-local survey jump</span></label>
           <select id="biome-view" aria-label="Travel to biome"><option value="">Choose a climate region…</option>${BIOMES.map((biome, i) => `<option value="${i}">${biome.name}</option>`).join('')}</select>
@@ -79,20 +90,29 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <label class="switch-row" for="wireframe"><span>Wireframe</span><input type="checkbox" id="wireframe" role="switch"></label>
           <label class="switch-row" for="show-stats"><span>Performance overlay <kbd>F3</kbd></span><input type="checkbox" id="show-stats" role="switch"></label>
           <div class="panel-buttons"><button id="reset">Reset viewpoint</button><button id="share">Copy world link ↗</button></div>
-          <p class="panel-note">Phase 3 adds graded roads, scenic route surveys and roadside props. Drivable vehicles arrive in a later phase.</p>
+          <p class="panel-note">Phase 5 adds a playable character with a third-person camera, animation and ground physics. Vehicles, buildings and NPCs arrive in later phases.</p>
         </aside>
         <div class="biome-legend" id="biome-legend" hidden><span class="eyebrow">CLIMATE OVERLAY</span>${BIOMES.map((biome) => `<span><i style="background:#${biome.color.toString(16).padStart(6, '0')}"></i>${biome.name}</span>`).join('')}</div>
         <pre class="performance" id="performance" aria-label="Performance statistics" hidden></pre>
         <footer class="bottom-hud"><div class="location"><span class="eyebrow"><i></i> <span id="location-name">VALLEY MEADOWS</span></span><div class="coordinates" id="coordinates">E 0.000 <span>/</span> N 0.000</div><div class="location-meta"><span id="altitude">ALT 420 M</span><span>SEED <b id="seed-label"></b></span></div></div>
-          <div class="controls-hint"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly</span><span><kbd>Q</kbd><kbd>E</kbd> altitude</span><span><kbd>⇧</kbd> boost</span><span>Drag to look</span></div>
-          <div class="travel"><button id="tour" aria-pressed="true"><span class="tour-dot"></span><span id="tour-label">Scenic flight</span><span id="tour-state">ON</span></button><div class="clock"><span id="clock">16:24</span><span id="speed">110 M/S CRUISE</span></div></div>
+          <div class="controls-hint" id="controls-hint"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span><span><kbd>Space</kbd> jump</span><span><kbd>⇧</kbd> sprint</span><span><kbd>Ctrl</kbd> crouch</span><span><kbd>Alt</kbd> walk</span><span>Drag to look</span></div>
+          <div class="travel"><span class="player-state" id="player-state"><span id="player-mode">ON FOOT</span><i></i><span id="player-stance">STANDING</span></span><button id="tour" aria-pressed="true"><span class="tour-dot"></span><span id="tour-label">Scenic flight</span><span id="tour-state">ON</span></button><div class="clock"><span id="clock">16:24</span><span id="speed">110 M/S CRUISE</span></div></div>
         </footer>
         <div class="reticle" id="reticle" aria-hidden="true">+</div>
       </main>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
       <div class="loading" id="loading"><div class="loading-brand">WAYFARER</div><div class="loading-line"><span id="loading-progress"></span></div><p id="loading-text">Finding your next horizon…</p><span class="loading-meta">PROCEDURAL TERRAIN · SEEDED & INFINITE</span></div>
-      <div class="fatal" id="fatal" hidden><span class="eyebrow">A SMALL DETOUR</span><h1>We couldn’t open this world.</h1><p id="fatal-message"></p><button class="primary" id="retry">Try again</button><button class="text-button" id="compatibility">Try WebGL2 compatibility mode</button></div>
-    `);
+      <div class="fatal" id="fatal" hidden><span class="eyebrow">A SMALL DETOUR</span><h1>We couldn’t open this world.</h1><p id="fatal-message"></p><button class="primary" id="retry">Try again</button><button class="text-button" id="compatibility">Try WebGL2 compatibility mode</button></div>`;
+}
+
+/** Small accessible development shell. Full menus/photo/mobile UI belong to Phase 8. */
+export class Interface {
+  private abort = new AbortController();
+  private toastTimer = 0;
+  private lastUpdate = 0;
+  statsVisible = false;
+  constructor(seed: string, hour: number, quality: QualityName, backend: BackendName, actions: UIActions) {
+    $('app').insertAdjacentHTML('beforeend', interfaceMarkup(hour, backend));
     $<HTMLInputElement>('#seed').value = seed;
     $<HTMLSelectElement>('#quality').value = quality;
     $('#seed-label').textContent = seed;
@@ -120,6 +140,15 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     on('wind', 'change', () => actions.wind($<HTMLInputElement>('#wind').checked));
     on('detail', 'change', () => actions.detail($<HTMLInputElement>('#detail').checked));
     on('show-stats', 'change', () => this.showStats($<HTMLInputElement>('#show-stats').checked));
+    on('walk-mode', 'change', () => actions.mode($<HTMLInputElement>('#walk-mode').checked ? 'character' : 'survey'));
+    on('first-person', 'change', () => actions.firstPerson($<HTMLInputElement>('#first-person').checked));
+    on('sensitivity', 'input', () => {
+      const value = Number($<HTMLInputElement>('#sensitivity').value);
+      $('#sensitivity-value').textContent = `${value.toFixed(2)}×`;
+      actions.sensitivity(value);
+    });
+    on('shoulder', 'click', () => actions.shoulder());
+    on('respawn', 'click', () => actions.respawn());
     on('retry', 'click', () => location.reload());
     on('compatibility', 'click', () => { const url = new URL(location.href); url.searchParams.set('renderer', 'webgl'); location.href = url.href; });
     window.addEventListener('keydown', (event) => { if (event.code === 'Escape') settings(false); }, { signal: this.abort.signal });
@@ -132,6 +161,17 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     $('#biome-legend').hidden = !biome;
   }
   syncPost(enabled: boolean): void { $<HTMLInputElement>('#postfx').checked = enabled; }
+  /** Reflect the active view in the panel and the HUD chrome. */
+  syncCamera(mode: 'character' | 'survey', firstPerson: boolean): void {
+    $<HTMLInputElement>('#walk-mode').checked = mode === 'character';
+    $<HTMLInputElement>('#first-person').checked = firstPerson;
+    $<HTMLInputElement>('#first-person').disabled = mode !== 'character';
+    document.body.classList.toggle('mode-survey', mode === 'survey');
+    const hint = $('#controls-hint');
+    hint.innerHTML = mode === 'character'
+      ? '<span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span><span><kbd>Space</kbd> jump</span><span><kbd>⇧</kbd> sprint</span><span><kbd>Ctrl</kbd> crouch</span><span><kbd>Alt</kbd> walk</span><span><kbd>C</kbd> survey camera</span>'
+      : '<span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly</span><span><kbd>Q</kbd><kbd>E</kbd> altitude</span><span><kbd>⇧</kbd> boost</span><span><kbd>C</kbd> on foot</span><span>Drag to look</span>';
+  }
   syncNature(vegetation: boolean, wind: boolean, roads = true): void {
     $<HTMLInputElement>('#vegetation').checked = vegetation;
     $<HTMLInputElement>('#wind').checked = wind;
@@ -161,10 +201,19 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     $('#heading').textContent = `${String(Math.round(stats.heading)).padStart(3, '0')}°`;
     $('#clock').textContent = stats.time;
     $('#speed').textContent = `${Math.round(stats.speed)} M/S ${stats.touring ? 'CRUISE' : 'FLIGHT'}`;
+    const onFoot = stats.mode === 'character';
     $('#tour-label').textContent = stats.routeName ? 'Route survey' : stats.touring ? 'Scenic flight' : 'Free flight';
     $('#tour-state').textContent = stats.routeName ? 'ON' : stats.touring ? 'ON' : 'MANUAL';
     $('#tour').setAttribute('aria-pressed', String(stats.touring || !!stats.routeName));
-    if (stats.routeName) $('#speed').textContent = `${Math.round(stats.speed * 3.6)} KM/H · ${stats.routeName}`;
+    // The HUD adapts to the view: no flight telemetry while walking, no walk
+    // telemetry while flying the survey camera.
+    $('#player-mode').textContent = onFoot ? (stats.firstPerson ? 'FIRST PERSON' : 'ON FOOT') : 'SURVEY CAM';
+    $('#player-stance').textContent = onFoot
+      ? `${stats.stance.toUpperCase()} · ${(stats.animation === 'idle' ? 'STANDING' : stats.animation.toUpperCase())}`
+      : 'FREE FLIGHT';
+    if (onFoot) $('#speed').textContent = `${Math.round(stats.speed * 3.6)} KM/H · ${stats.movement.toUpperCase()}`;
+    else if (stats.routeName) $('#speed').textContent = `${Math.round(stats.speed * 3.6)} KM/H · ${stats.routeName}`;
+    else $('#speed').textContent = `${Math.round(stats.speed)} M/S ${stats.touring ? 'CRUISE' : 'FLIGHT'}`;
     if ($<HTMLInputElement>('#cycle').checked && document.activeElement !== $<HTMLInputElement>('#time')) {
       $<HTMLInputElement>('#time').value = String(Number(stats.time.slice(0, 2)) + Number(stats.time.slice(3)) / 60);
       $('#time-value').textContent = stats.time;
@@ -179,6 +228,8 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
       `Origin      ${stats.shifts} rebases`,
       `Plants      ${stats.vegetation.toLocaleString()} / ${stats.vegetationCapacity.toLocaleString()} slots`,
       `Batches     ${stats.vegetationBatches} instanced`,
+      `Player      ${stats.mode.toUpperCase()} · ${stats.stance.toUpperCase()} · ${stats.animation}`,
+      `Rig         ${stats.rigSource} · ${stats.rigJoints} joints · ${stats.rigClips} clips`,
       `Road tiles  ${stats.roadTiles}`,
       `Props       ${stats.props.toLocaleString()} / ${stats.propCapacity.toLocaleString()} slots`,
       `LOD 0–5     ${stats.lod.join(' · ')}`,

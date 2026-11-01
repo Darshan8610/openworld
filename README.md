@@ -1,8 +1,10 @@
-# Wayfarer — Infinite Open-World Driving Game
+# Wayfarer — Infinite Open-World Game
 
-**Phase 3: roads through the wild.** A seeded, infinite, chunk-streamed landscape with five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, roadside props, route-following survey travel, and an Ultra graphics preset. Built on the Phase 1 world foundation: Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers, floating origin, dynamic day/night sky, and a free-flight survey camera.
+**Phase 5: the playable character.** A seeded, infinite, chunk-streamed open world with five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways and an Ultra graphics preset — now explored **on foot** by a skinned, animated, collision-aware human character with a third-person camera.
 
-> Phase 3 adds roads, routes and world props. Drivable vehicles, traffic, missions, physics, weather, audio and full menus remain later phases; the route camera is a survey tool, not a car controller.
+Built on the existing foundation: Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers, floating origin, fixed 120 Hz simulation, dynamic day/night sky, and the Phase 3 road network. The free-flight survey camera remains available as a world-inspection tool.
+
+> Phase 5 adds the player character. A physics engine, world objects, buildings, NPCs, water, vehicles, audio and the story layer remain later phases.
 
 ## Quick start
 
@@ -16,8 +18,10 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 36 unit tests (noise, streaming, origin, terrain, biomes, vegetation, roads, overlooks)
-npm run test:browser  # 11 Playwright browser tests (requires Chromium)
+npm test              # 74 unit + integration tests (noise, streaming, terrain, biomes,
+                      # vegetation, roads, overlooks, character motion/rig/animation,
+                      # character system, UI markup integrity)
+npm run test:browser  # 15 Playwright browser tests (requires Chromium)
 ```
 
 For browser tests, install Chromium once:
@@ -28,16 +32,38 @@ npx playwright install chromium
 
 ## Controls
 
+**On foot (default view)**
+
+| Input | Action |
+|---|---|
+| WASD / arrows | Move, camera relative |
+| Mouse drag | Look around (Esc releases pointer lock) |
+| Shift | Sprint |
+| Alt | Walk |
+| Ctrl | Crouch |
+| X | Strafe lock (face the camera) |
+| Space | Jump |
+| F | First / third person |
+| Z | Swap shoulder |
+| C | Switch to the survey camera |
+| Mouse wheel | Camera zoom |
+
+**Survey camera (inspection)**
+
 | Input | Action |
 |---|---|
 | WASD / arrows | Fly horizontally |
 | Q / E | Descend / ascend |
 | Shift | Boost |
-| Mouse drag | Look around |
-| Explore button | Pointer-lock mouse look (Esc releases) |
 | Mouse wheel | Adjust cruise speed |
 | T | Toggle scenic auto-flight |
 | G | Start/stop the nearest scenic route survey |
+| C | Switch back to the character |
+
+**Both views**
+
+| Input | Action |
+|---|---|
 | R | Reset viewpoint |
 | P | Pause/resume day cycle |
 | V | Toggle vegetation |
@@ -46,9 +72,19 @@ npx playwright install chromium
 | H | Hide/show HUD |
 | F3 | Performance overlay |
 
-The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), vegetation, roads, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1`, `roads=0|1`, `postfx=0|1` and `route=cedar|golden|snowline` alongside seed, position, hour, quality, and renderer.
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `postfx=0|1`, `route=cedar|golden|snowline` and optional `character=<glb-url>` alongside seed, player position, hour, quality and renderer.
 
-## What Phase 3 adds
+## What Phase 5 adds
+
+- **Playable character:** a 19-joint skinned rig with 13 animation clips driven through a real `AnimationMixer`, a collision-aware locomotion controller (momentum, slope handling, step climbing, ledge detection, gravity, coyote time, jump buffering, variable jump height) and stance-aware movement (walk / jog / sprint / crouch / strafe / backpedal).
+- **Third-person camera:** smooth orbit boom with terrain and solid-geometry avoidance, shoulder swap, zoom, speed FOV, landing shake, and a first-person mode.
+- **Asset pipeline:** GLTF/GLB humanoids load via `?character=<url>`, bones resolve semantically, animation names map to locomotor states, and unmatched states are back-filled with procedural clips. The built-in rig is a clearly labelled placeholder, and a failed load never breaks the game.
+- **World integration:** the player drives the floating origin and streaming focus, the post chain follows the active camera, the HUD adapts to the view, and the survey camera remains available for inspection.
+- **Extensible seams:** `CharacterSampler.blocked()` for world colliders, `WaterQuery` for Phase 9 water, typed `CharacterEvent`s for the Phase 4/11 event layer.
+
+See [docs/PHASE5.md](docs/PHASE5.md) for the architecture, movement model, validation and limitations.
+
+## What Phase 3 added
 
 - **Scenic roads:** an infinite, seed-warped corridor network graded into the terrain, with two asphalt lanes, gravel shoulders, double-yellow and white edge markings, crown/crossfall, and periodic widened overlook pullouts. Road ribbons are worker-built and draped on the same streamed tiles as the ground.
 - **Routes & survey travel:** three launch routes (Cedar Pass, Golden Ridge, Snowline Run) into the same infinite network. `G` follows the nearest corridor; the settings panel jumps between named routes. This is a camera survey, not driving physics.
@@ -56,7 +92,7 @@ The settings panel exposes the world seed, time-of-day slider, day-cycle toggle,
 - **Richer vegetation & cliffs:** pine, spruce, aspen, birch, shrub, fern, grass, wildflowers, weathered rock and stratified cliff outcrops in ten global instanced batches. Plants are kept clear of the carriageway, shoulders and pullouts.
 - **Ultra graphics:** denser terrain tessellation, extended horizons, 4096px soft shadows, higher plant/prop budgets, ultra-detail silhouettes, and a GTAO ambient-occlusion + denoise pass on top of bloom, FXAA and vignette. Lower presets never pay for Ultra-only passes.
 
-## What Phase 2 adds
+## What Phase 2 added
 
 - **Biomes:** valley meadows, conifer highlands, golden steppe, alpine tundra, and snowline peaks. Seeded temperature/moisture fields blend continuously with altitude and slope; rock and snow masks expose cliffs and summits. The HUD names the live biome, and `B` shows a climate overlay.
 - **Surface detail:** three seamless 256×256 procedural textures (grass, rock, snow) are triplanar-projected in world space, blended by biome/slope/snow, and faded with distance. Texture periods divide the floating-origin wrap so rebasing does not slide the ground pattern. Macro albedo adds forest-duff and steppe-curing variation.
@@ -80,6 +116,9 @@ src/
   config.ts               central tuning + vegetation quality budgets
   main.ts                 bootstrap
   core/                   game loop, fixed clock, input, floating origin, survey camera
+  character/              locomotion solver, character controller, skinned rig,
+                          animation controller + clips, third-person camera, assets,
+                          world sampler, character system
   world/                  noise, terrain field, biomes, quadtree tiles, worker pool,
                           generator, vegetation field/manager, road network/geometry/manager,
                           viewpoints, sky
@@ -91,7 +130,7 @@ src/
 tests/                    unit + browser regression tests
 ```
 
-See [docs/PHASE1.md](docs/PHASE1.md) for the world foundation, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE3.md](docs/PHASE3.md) for roads, routes, props, Ultra graphics and validation.
+See [docs/PHASE1.md](docs/PHASE1.md) for the world foundation, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, [docs/PHASE3.md](docs/PHASE3.md) for roads, routes, props and Ultra graphics, and [docs/PHASE5.md](docs/PHASE5.md) for the playable character.
 
 ## Performance notes
 
@@ -101,6 +140,7 @@ See [docs/PHASE1.md](docs/PHASE1.md) for the world foundation, [docs/PHASE2.md](
 - Chunk geometry, materials, instance buffers, and textures are disposed on eviction, seed change, quality change, and teardown.
 - The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, and instanced batch count.
 - Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there.
+- The character adds one skinned draw call set (body) per player and a 19-joint skeleton animation update per frame; it does not add per-frame allocations to the streaming path. Movement runs inside the existing fixed 120 Hz step.
 
 ## Assets and licenses
 
