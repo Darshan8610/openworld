@@ -6,6 +6,8 @@ import { Minimap } from '../ui/minimap';
 import { ObjectiveRuntime } from '../game/objectives';
 import { buildingInteractionProvider } from '../interaction/building-provider';
 import type { BuildingInteraction } from '../world/buildings/types';
+import { FrameProfiler } from './profiler';
+import { AdaptiveQualityController } from './adaptive-quality';
 import { GameSaveStore } from '../persistence/game-save';
 import { Scene, Fog, Vector3 } from 'three/webgpu';
 import type { PerspectiveCamera, Object3D } from 'three/webgpu';
@@ -133,6 +135,12 @@ export class Game {
   /** On-foot building bindings (doors) currently registered, by interaction id. */
   private readonly doorProviders = new Map<string, BuildingInteraction>();
   private doorSyncClock = 0;
+  /** Phase 13: bounded frame profiler + adaptive preset (never above the ceiling). */
+  private readonly profiler = new FrameProfiler();
+  private readonly adaptive = new AdaptiveQualityController();
+  private adaptiveEnabled = true;
+  private qualityCeiling: QualityName;
+  private lastAdaptiveCheck = 0;
   private readonly store = new ObjectStateStore();
   private inventory!: Inventory;
   private queries!: WorldQueries;
@@ -195,7 +203,7 @@ export class Game {
   };
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
-    this.context = context; this.seed = seed; this.quality = quality;
+    this.context = context; this.seed = seed; this.quality = quality; this.qualityCeiling = quality;
     this.scene.name = 'Wayfarer / integrated Phases 1–12';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
@@ -314,6 +322,7 @@ export class Game {
       water: (value) => { this.water.setEnabled(value); this.updateURL(); },
       weather: (value) => { this.weather.setOverride(value); this.updateURL(); },
       minimap: (value) => this.minimap.setEnabled(value),
+      adaptiveQuality: (value) => { this.adaptiveEnabled = value; this.adaptive.reset(); },
       route: (value) => this.travelRoute(value),
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
@@ -531,8 +540,12 @@ export class Game {
     // Keys pressed behind a menu or the title screen must never move the player.
     if (this.ui.overlay !== 'none') this.input.clear();
     try {
+      const frameStart = performance.now();
+      let fixedMs = 0;
+      let renderMs = 0;
       this.loop.tick(timestamp, (dt) => {
         if (!this.ready || this.discoveryPanel.isOpen) return;
+        const stepStart = performance.now();
         // Weather and the water surface are advanced on the fixed clock: buoyancy,
         // swimming and the wave phase must never depend on the render rate.
         this.stepEnvironment(dt);
@@ -552,7 +565,9 @@ export class Game {
         // objectives evaluate on the fixed clock, never on render rate.
         const missionFocus = this.resolveActivePosition();
         this.objectives.updatePlayer(missionFocus.x, missionFocus.z);
+        fixedMs += performance.now() - stepStart;
       }, (alpha, dt) => {
+        const renderStart = performance.now();
         const focus = this.resolveActivePosition();
         this.cameraWorld.copy(this.activeCamera.position).add(this.origin.absolute);
         this.world.update(dt, focus, this.cameraWorld, this.simTime);
@@ -644,6 +659,8 @@ export class Game {
           x: focus.x, y: focus.y, z: focus.z,
           heading, time: this.sky.timeLabel, biome: biome.name,
           fps: this.loop.fps, calls: this.context.renderer.info.render.drawCalls,
+          frameP95Ms: this.profiler.frameP95Ms(), frameAvgMs: this.profiler.frameAvgMs(),
+          adaptiveQuality: this.adaptiveEnabled ? `${this.quality} ≤ ${this.qualityCeiling}` : 'off',
           triangles: this.context.renderer.info.render.triangles,
           geometries: this.context.renderer.info.memory.geometries,
           cached: stats.cached, pending: stats.pending, shifts: this.origin.shifts,
@@ -694,8 +711,34 @@ export class Game {
           bodiesInWater: this.buoyancy.stats.bodiesInWater,
           floatingBodies: this.buoyancy.stats.floating,
         }, timestamp);
+        renderMs += performance.now() - renderStart;
       });
+      this.profiler.record(performance.now() - frameStart, fixedMs, renderMs);
+      // Phase 13: consider a preset step once per second of running time.
+      if (frameStart - this.lastAdaptiveCheck >= 1000) {
+        this.lastAdaptiveCheck = frameStart;
+        this.considerAdaptiveQuality();
+      }
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
+  }
+
+  /**
+   * Phase 13: step the graphics preset on sustained frame-budget misses.
+   * Never above the player's own choice, never behind a menu, and always
+   * announced — adaptive quality is a visible aid, not a silent downgrade.
+   */
+  private considerAdaptiveQuality(): void {
+    if (!this.adaptiveEnabled || !this.ready || this.ui.overlay !== 'none') return;
+    const recommendation = this.adaptive.update(
+      { frameP95Ms: this.profiler.frameP95Ms(), current: this.quality, ceiling: this.qualityCeiling },
+      1,
+    );
+    if (recommendation && recommendation !== this.quality) {
+      this.ui.toast(`Adaptive quality: ${this.quality} → ${recommendation} (frame budget)`);
+      // setQuality re-streams; the controller's own cooldown starts on commit,
+      // so no reset here — a reset would wipe exactly that cooldown.
+      this.setQuality(recommendation, true);
+    }
   }
 
   /**
@@ -1220,8 +1263,10 @@ export class Game {
     this.updateURL();
   }
 
-  private setQuality(quality: QualityName): void {
+  private setQuality(quality: QualityName, adaptive = false): void {
     if (quality === this.quality) return;
+    // The player's own choice is the ceiling adaptive quality may reach.
+    if (!adaptive) this.qualityCeiling = quality;
     this.beginLoading();
     this.quality = quality;
     this.terrain.reset(this.seed, quality);

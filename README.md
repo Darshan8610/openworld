@@ -1,6 +1,6 @@
 # Wayfarer — Infinite Open-World Game
 
-**Phases 1–12 combined (Phase 11 milestone 11.1): a seeded, infinite world you can walk, swim, drive, fly, sail, hear, inspect, touch and share with other people.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, carved lakes and rivers with a shared wave surface, buoyancy, swimming, a seeded weather front with pooled particles, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, 26 land/air/water vehicles, synthesised spatial audio with ambience zones, a title/pause menu shell with a real mix and accessibility options, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
+**Phases 1–13 combined: a seeded, infinite world you can walk, swim, drive, fly, sail, hear, inspect, touch, navigate and share with other people — hardened for release.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, carved lakes and rivers with a shared wave surface, buoyancy, swimming, a seeded weather front with pooled particles, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, 26 land/air/water vehicles, synthesised spatial audio with ambience zones, a title/pause menu shell with a real mix and accessibility options, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
 
 Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers and Rapier 3D.
 
@@ -285,6 +285,16 @@ Corrupt/newer game slots are refused rather than overwritten. A
 story-independent mission/objective/flag runtime (`src/game/objectives.ts`)
 with typed mission events is ready for narrative content — none is authored.
 See [Phase 11 engineering notes](docs/PHASE11.md).
+
+### Phase 13 — profiling & adaptive quality
+
+A bounded frame profiler (240-sample ring) feeds the F3 overlay with frame avg/p95
+and drives **adaptive quality**: the preset steps down after ~10 s of sustained
+misses against a ~30 fps budget and climbs back only on a clear surplus — never
+above your own preset, always announced with a toast, toggleable in settings.
+Long-run streaming, save-fuzz validation, physics-stability soaks and a
+memory-bound audit pin the release guarantees. See
+[Phase 13 engineering notes](docs/PHASE13.md).
 
 ### Phase 9 integrated
 
