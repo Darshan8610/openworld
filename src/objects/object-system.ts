@@ -432,6 +432,22 @@ export class ObjectSystem {
     instance?.body?.wake();
   }
 
+  /**
+   * Solid geometry that walking actors (NPCs today, Phase 7 interiors and Phase
+   * 10 vehicles later) must walk around. Dynamic props are excluded on purpose:
+   * they move, and a stale blocker would trap a character against a crate that
+   * has already been pushed away. Small pickups are excluded for the same reason.
+   */
+  blocksWalk(x: number, z: number, margin = 0.28): boolean {
+    for (const instance of this.active.values()) {
+      if (instance.isDynamic || instance.archetype.radius < 0.5) continue;
+      const dx = x - instance.centre.x, dz = z - instance.centre.z;
+      const reach = instance.archetype.radius + margin;
+      if (dx * dx + dz * dz < reach * reach) return true;
+    }
+    return false;
+  }
+
   get stats(): ObjectStats {
     let dynamic = 0, bodies = 0, collected = 0;
     for (const instance of this.active.values()) {

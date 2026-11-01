@@ -130,6 +130,27 @@ describe('interaction manager', () => {
     expect(valve.state().level).toBe(1);
   });
 
+  it('confirms a valve on a single press when hold-to-confirm is disabled', () => {
+    const { manager, actor } = harness();
+    const valve = new FakeProvider('valve-access', archetypeOrThrow('service-valve'), { x: 0, y: 0.6, z: -1.6 }, { level: 0 });
+    manager.register(valve);
+    expect(manager.requiresHold).toBe(true);
+    manager.setHoldToConfirm(false);
+    expect(manager.requiresHold).toBe(false);
+
+    const prompt = manager.update(1 / 120, actor(0, 0), { pressed: true, down: true });
+    expect(prompt?.progress).toBe(1);
+    expect(valve.state().level).toBe(1);
+
+    // Re-enabling the accessibility option restores the full hold.
+    manager.setHoldToConfirm(true);
+    manager.unregister('valve-access');
+    const gate = new FakeProvider('gate-access', archetypeOrThrow('access-gate'), { x: 0, y: 1, z: -2 }, { open: false });
+    manager.register(gate);
+    for (let i = 0; i < 30; i++) manager.update(1 / 120, actor(0, 0), { pressed: i === 0, down: true });
+    expect(gate.state().open).toBe(true);
+  });
+
   it('cancels a hold when the key is released', () => {
     const { manager, actor } = harness();
     const valve = new FakeProvider('valve-2', archetypeOrThrow('service-valve'), { x: 0, y: 0.6, z: -1.6 }, { level: 0 });

@@ -3,7 +3,7 @@ import type { GameEventBus } from '../core/events';
 import type { WorldQueries } from '../world/world-queries';
 import type { PropPhysicsWorld } from '../physics/prop-physics';
 import type { Inventory } from './inventory';
-import type { ObjectArchetype, ObjectState } from '../objects/archetypes';
+import type { ObjectState } from '../objects/archetypes';
 import type { PersistencePolicy } from '../core/entities';
 
 /** The acting entity (survey rig today, the Phase 5 character later). */
@@ -14,9 +14,21 @@ export interface ActorView {
   readonly yaw: number;
 }
 
+/**
+ * The minimum an interaction provider must say about itself for events, labels
+ * and logging. World objects pass their full `ObjectArchetype`; NPCs, vehicles
+ * and buildings pass their own descriptor, so the interaction layer never has to
+ * grow a branch per provider kind.
+ */
+export interface InteractionArchetype {
+  readonly key: string;
+  readonly label: string;
+}
+
 export interface InteractionContext {
   readonly objectId: string;
-  readonly archetype: ObjectArchetype;
+  /** Provider descriptor (`ObjectArchetype` for world objects). */
+  readonly archetype: InteractionArchetype;
   readonly state: ObjectState;
   readonly actor: ActorView;
   /** Simulation time in seconds since boot. */
@@ -51,14 +63,14 @@ export interface InteractionAction {
 }
 
 /**
- * Something the interaction system can target. Implemented by world objects;
- * NPCs, vehicles and buildings will implement the same shape in later phases,
- * so interaction never needs to know what it is looking at.
+ * Something the interaction system can target. Implemented by world objects and
+ * NPCs; vehicles and buildings will implement the same shape in later phases, so
+ * interaction never needs to know what it is looking at.
  */
 export interface InteractionProvider {
   readonly id: string;
   /** Data definition that drives the actions and labels. */
-  readonly archetype: ObjectArchetype;
+  readonly archetype: InteractionArchetype;
   /** Canonical centre used for aiming and distance checks. */
   readonly centre: WorldPoint;
   readonly radius: number;

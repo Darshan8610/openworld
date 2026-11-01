@@ -32,6 +32,13 @@ describe('interface markup', () => {
     expect(markup).toContain('PHASE 05');
   });
 
+  it('exposes the Phase 12 menus, mixing and accessibility controls', () => {
+    for (const id of ['pause', 'pause-title', 'pause-resume', 'pause-settings', 'pause-restart', 'menu-seed', 'menu-quality', 'volume-master', 'volume-master-value', 'mute', 'a11y-hold', 'captions-feed', 'audio-status']) {
+      expect(declared.has(id), id).toBe(true);
+    }
+    expect(markup).toContain('PHASE 12');
+  });
+
   it('interpolates the backend and clock instead of leaving placeholders', () => {
     expect(markup).toContain('WebGL2');
     expect(markup).toContain('17:36');

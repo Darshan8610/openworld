@@ -23,6 +23,17 @@ export interface GameEventMap {
   'world:objectsReset': { seed: string };
   'physics:bodySlept': { id: string };
   'physics:bodyWoke': { id: string };
+  /** Phase 8 — NPC life simulation. Consumers: UI, audio (12), missions (11). */
+  'npc:spawned': { id: string; role: string; level: string };
+  'npc:despawned': { id: string; role: string };
+  'npc:behaviourChanged': { id: string; behaviour: string; activity: string };
+  'npc:detectedPlayer': { id: string; distance: number };
+  'npc:playerLost': { id: string };
+  'npc:talkStarted': { id: string; label: string };
+  'npc:talkEnded': { id: string; reason: 'player' | 'distance' | 'timeout' };
+  'npc:topicSelected': { id: string; topic: string; line: string };
+  'npc:stateChanged': { id: string; role: string };
+  'world:npcReset': { seed: string };
 }
 export type GameEventType = keyof GameEventMap;
 type Handler<K extends GameEventType> = (payload: GameEventMap[K]) => void;
