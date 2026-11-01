@@ -90,11 +90,12 @@ npx playwright install chromium
 | K | Physics collider wireframes (developer) |
 | X | Drop a physics test crate (developer, while using the Rapier sandbox) |
 | J | Toggle the water surface |
-| M | Cycle the weather override (auto → clear → cloudy → rain → storm → fog → snow → blizzard) |
+| U | Cycle the weather override (auto → clear → cloudy → rain → storm → fog → snow → blizzard) |
+| M | Open/close the world chart (map, waypoints and save slots) |
 
 The title screen exposes the world seed (with a random-seed button), the graphics preset and a shareable link before you commit to a walk. The pause menu (`Esc`) freezes the simulation and the audio and offers resume, settings, copy link, mute, restart and back-to-title, plus a controls list.
 
-The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, people (NPC population), water surfaces with a live status line, weather selection (auto + eleven conditions), wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, a shareable world link, a four-bus sound mix (master / ambience / world & footsteps / interface, mute, sound captions) and accessibility controls (reduce motion, high contrast, larger interface text, hold-to-confirm). Preferences persist locally under `wayfarer.preferences` and apply immediately.
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, people (NPC population), the corner minimap, water surfaces with a live status line, weather selection (auto + eleven conditions), wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, a shareable world link, a four-bus sound mix (master / ambience / world & footsteps / interface, mute, sound captions) and accessibility controls (reduce motion, high contrast, larger interface text, hold-to-confirm). Preferences persist locally under `wayfarer.preferences` and apply immediately.
 
 Share URLs include `seed`, player position, `hour`, `quality`, `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `npcs=0|1`, `water=0|1`, `weather=auto|clear|partly-cloudy|cloudy|overcast|rain|heavy-rain|storm|fog|snow|blizzard|windy`, `postfx=0|1`, `physics=0`, `route=cedar|golden|snowline` and an optional `character=<glb-url>`.
 
@@ -268,14 +269,21 @@ The phase lines were developed against the same Phase 3 base, so this branch rec
 
 No paid assets. Terrain, sky, stars, moon, biomes, surface/road textures, vegetation, cliffs, road signs, props, objects, materials and **all sound** are procedural — audio is synthesised at runtime from a generated noise buffer and oscillators, so there are no sample files or licences. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed; Rapier 3D is Apache-2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-### Phase 11 — first discovery/persistence milestone
+### Phase 11 — discovery, navigation & persistence infrastructure
 
-Press **M** or **Map · M** for the local world chart. Click to place a waypoint,
-zoom, or use the three manual save/load slots. Slots restore the world seed,
-character XZ via grounded respawn, time, discovery, waypoint, objects and inventory.
-The existing per-seed object autosave remains separate. Corrupt/newer game slots
-are refused rather than overwritten. Phase 11 is **in progress**: routing, minimap,
-mission infrastructure and other-phase entity adapters are not yet implemented.
+Press **M** or **Map · M** for the world chart. Click to place a waypoint —
+when the waypoint shares a road corridor with you, the chart draws a real
+corridor route and states its honest distance (cross-corridor trips are
+labelled as direct lines, never fake routes). The bottom-left **corner minimap**
+(toggle in settings) shows discovered land, nearby corridors, the waypoint and
+your heading, throttled and canonical-coordinate based. Use the three manual
+save/load slots or the silent **autosave (slot 0, every 120 s)**: saves are
+version 2 and restore the seed, character XZ + yaw, time, weather override,
+discovery, waypoint, mission progress, objects and inventory; v1 slots migrate
+automatically. The existing per-seed object autosave remains separate.
+Corrupt/newer game slots are refused rather than overwritten. A
+story-independent mission/objective/flag runtime (`src/game/objectives.ts`)
+with typed mission events is ready for narrative content — none is authored.
 See [Phase 11 engineering notes](docs/PHASE11.md).
 
 ### Phase 9 integrated

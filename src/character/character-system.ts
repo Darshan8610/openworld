@@ -77,6 +77,7 @@ export class CharacterSystem {
   private readonly lookDirection = new Vector3();
   private spawnX = 0;
   private spawnZ = 0;
+  private spawnYaw: number | null = null;
   private spawned = false;
   private wasJumpHeld = false;
   private water: WaterQuery = NO_WATER;
@@ -129,12 +130,28 @@ export class CharacterSystem {
   setWater(query: WaterQuery | null): void { this.water = query ?? NO_WATER; }
 
   /** Queue a spawn at a canonical world XZ; the ground is resolved when streamed. */
-  spawnAt(x: number, z: number): void {
+  spawnAt(x: number, z: number, yaw?: number): void {
     this.spawnX = x;
     this.spawnZ = z;
+    this.spawnYaw = yaw ?? null;
     this.spawned = false;
     this.cameraRig.reset();
+    this.applySpawnYaw();
     if (this.visual) this.visual.root.visible = false;
+  }
+
+  /** Saved camera yaw (radians); restored through `spawnAt(x, z, yaw)`. */
+  get yaw(): number { return this.cameraRig.yaw; }
+
+  /**
+   * Re-apply a restored yaw after any reset. The camera rig owns the look
+   * direction; the body faces away from it (body yaw = camera yaw + π, the
+   * same relation `visualPose` uses every frame).
+   */
+  private applySpawnYaw(): void {
+    if (this.spawnYaw === null) return;
+    this.cameraRig.yaw = this.spawnYaw;
+    this.controller.yaw = this.spawnYaw + Math.PI;
   }
 
   get position(): Vector3 { return this.controller.position; }
@@ -242,6 +259,7 @@ export class CharacterSystem {
     this.controller.spawn(this.spawnX, ground + 0.05, this.spawnZ);
     this.previous.copy(this.controller.position);
     this.cameraRig.reset();
+    this.applySpawnYaw();
     this.spawned = true;
     if (this.visual) this.visual.root.visible = true;
   }
@@ -256,6 +274,7 @@ export class CharacterSystem {
     this.spawnWorld.copy(this.controller.position);
     this.safeGround.copy(this.controller.position);
     this.cameraRig.reset();
+    this.applySpawnYaw();
     this.spawned = true;
     if (this.visual) this.visual.root.visible = true;
     this.options.origin.update(this.controller.position);

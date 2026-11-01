@@ -1,5 +1,6 @@
 import type { Discovery, MapPoint } from '../discovery/discovery';
 import type { WorldQueries } from '../world/world-queries';
+import { describeRoute, planRoute } from '../discovery/navigation';
 
 /** Bounded local chart. No invented road links or unstreamed building markers. */
 export class DiscoveryPanel {
@@ -71,8 +72,23 @@ export class DiscoveryPanel {
     }
     ctx.save(); ctx.translate(160, 160); ctx.rotate(yaw); ctx.fillStyle = '#f5faf0'; ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(5, 6); ctx.lineTo(0, 3); ctx.lineTo(-5, 6); ctx.closePath(); ctx.fill(); ctx.restore();
     const w = this.discovery.waypoint;
-    if (w) { ctx.fillStyle = '#e6b377'; ctx.beginPath(); ctx.arc(160 + (w.x - position.x) / this.radius * 160, 160 + (w.z - position.z) / this.radius * 160, 5, 0, Math.PI * 2); ctx.fill(); }
-    this.info.textContent = `${position.x.toFixed(0)}, ${position.z.toFixed(0)} · span ${this.radius * 2} m` + (w ? ` · waypoint ${Math.hypot(w.x - position.x, w.z - position.z).toFixed(0)} m (direct, not a route)` : '');
+    let routeText = '';
+    if (w) {
+      // Phase 11 navigation: honest routes only — a corridor route when both
+      // ends share a corridor, otherwise an explicitly-labelled direct line.
+      const plan = planRoute(roads, position, w);
+      routeText = ` · ${describeRoute(plan)}`;
+      if (plan.kind === 'corridor') {
+        ctx.strokeStyle = '#5ab2ff'; ctx.lineWidth = 2; ctx.beginPath();
+        plan.points.forEach((p, i) => {
+          const px = 160 + (p.x - position.x) / this.radius * 160, py = 160 + (p.z - position.z) / this.radius * 160;
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#e6b377'; ctx.beginPath(); ctx.arc(160 + (w.x - position.x) / this.radius * 160, 160 + (w.z - position.z) / this.radius * 160, 5, 0, Math.PI * 2); ctx.fill();
+    }
+    this.info.textContent = `${position.x.toFixed(0)}, ${position.z.toFixed(0)} · span ${this.radius * 2} m` + routeText;
   }
   dispose(): void { this.abort.abort(); this.root.remove(); this.toggle.remove(); }
 }

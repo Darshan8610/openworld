@@ -1,6 +1,9 @@
 import { vehicleWaterProvider } from '../vehicles/water-adapter';
 import { Discovery } from '../discovery/discovery';
+import type { MapPoint } from '../discovery/discovery';
 import { DiscoveryPanel } from '../ui/discovery-panel';
+import { Minimap } from '../ui/minimap';
+import { ObjectiveRuntime } from '../game/objectives';
 import { GameSaveStore } from '../persistence/game-save';
 import { Scene, Fog, Vector3 } from 'three/webgpu';
 import type { PerspectiveCamera } from 'three/webgpu';
@@ -82,6 +85,10 @@ import type { BuildingStorage } from '../world/buildings/state';
 export class Game {
   private readonly discovery = new Discovery();
   private readonly discoveryPanel: DiscoveryPanel;
+  /** Phase 11: live corner minimap (canonical coords only). */
+  private minimap: Minimap;
+  /** Last waypoint handed to the minimap (reference compare on setWaypoint). */
+  private lastWaypoint: MapPoint | null = null;
   private readonly scene = new Scene();
   private readonly origin = new FloatingOrigin();
   private readonly loop = new FixedLoop();
@@ -117,6 +124,10 @@ export class Game {
   private mode: ViewMode = 'character';
   /** Typed game-event layer shared by objects, interaction, audio and missions. */
   private readonly events = new GameEventBus();
+  /** Phase 11: mission/objective/flag runtime — infrastructure only, no story. */
+  private readonly objectives = new ObjectiveRuntime(this.events);
+  /** Seconds accumulated toward the silent 120 s autosave (slot 0). */
+  private autosaveElapsed = 0;
   private readonly store = new ObjectStateStore();
   private inventory!: Inventory;
   private queries!: WorldQueries;
@@ -287,6 +298,7 @@ export class Game {
       dialogueEnd: () => this.endDialogue(),
       water: (value) => { this.water.setEnabled(value); this.updateURL(); },
       weather: (value) => { this.weather.setOverride(value); this.updateURL(); },
+      minimap: (value) => this.minimap.setEnabled(value),
       route: (value) => this.travelRoute(value),
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
@@ -343,6 +355,7 @@ export class Game {
     this.events.on('inventory:changed', () => { this.saveDirty = true; });
     if (this.restoreNotice) this.ui.toast(this.restoreNotice);
     this.discoveryPanel = new DiscoveryPanel(this.discovery, () => this.queries, slot => this.saveGame(slot), slot => this.loadGame(slot));
+    this.minimap = new Minimap(this.discovery, () => this.queries, document.body);
     this.input.onShortcut = (code) => {
       if (this.discoveryPanel.isOpen || this.ui.overlay !== 'none') return;
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
@@ -377,8 +390,8 @@ export class Game {
       if (code === 'KeyR') { if (this.mode === 'character') this.respawnPlayer(); else this.rig.reset(); }
 
       if (code === 'KeyJ') { this.water.setEnabled(!this.water.isEnabled); this.ui.syncWater(this.water.isEnabled, this.weather.overridden); }
-      // Weather pinning lives on M; N stays with the Phase 8 population toggle.
-      if (code === 'KeyM') {
+      // Weather pinning lives on U; M is the world map (DiscoveryPanel) and N stays with NPCs.
+      if (code === 'KeyU') {
         const kinds: (WeatherKind | null)[] = [null, 'clear', 'cloudy', 'rain', 'storm', 'fog', 'snow', 'blizzard'];
         const next = kinds[(kinds.indexOf(this.weather.overridden) + 1) % kinds.length] ?? null;
         this.weather.setOverride(next);
@@ -520,6 +533,10 @@ export class Game {
         this.propPhysics.step(dt, this.groundSample);
         this.npcs.fixedUpdate(dt, this.resolveActivePosition());
         this.updateInteraction(dt);
+        // Mission infrastructure: feed the canonical player position so `reach`
+        // objectives evaluate on the fixed clock, never on render rate.
+        const missionFocus = this.resolveActivePosition();
+        this.objectives.updatePlayer(missionFocus.x, missionFocus.z);
       }, (alpha, dt) => {
         const focus = this.resolveActivePosition();
         this.cameraWorld.copy(this.activeCamera.position).add(this.origin.absolute);
@@ -527,8 +544,18 @@ export class Game {
         this.presentEnvironment(dt);
         this.buildings.update(focus, dt, this.sky.hour);
         this.buildingExperience.update(timestamp);
-        if (this.ready && this.ui.overlay === 'none' && this.mode === 'character') this.discovery.visit(focus);
+        if (this.ready && this.ui.overlay === 'none' && this.mode === 'character' && this.discovery.visit(focus)) {
+          this.events.emit('world:locationDiscovered', {
+            x: focus.x, z: focus.z,
+            cell: `${Math.floor(focus.x / 256)}:${Math.floor(focus.z / 256)}`,
+          });
+        }
         this.discoveryPanel.update(focus, this.character.controller.yaw, timestamp);
+        this.minimap.update({ x: focus.x, z: focus.z, yaw: this.character.controller.yaw }, timestamp);
+        if (this.discovery.waypoint !== this.lastWaypoint) {
+          this.lastWaypoint = this.discovery.waypoint;
+          this.minimap.setWaypoint(this.lastWaypoint);
+        }
         if (!this.ready) {
           this.loadTime += dt;
           // Spawn as soon as the local grid exists; keep loading distant roots behind the overlay.
@@ -569,6 +596,15 @@ export class Game {
         this.post.setCamera(this.activeCamera);
         this.post.render(this.scene, this.activeCamera);
         if (this.saveDirty && this.ready && timestamp - this.lastSave > 4000) this.flushSave(timestamp);
+        // Phase 11: silent autosave every 120 s into slot 0 (never while
+        // driving or behind a menu — saveGame enforces both, silently here).
+        if (this.ready && this.ui.overlay === 'none') {
+          this.autosaveElapsed += dt;
+          if (this.autosaveElapsed >= 120) {
+            this.autosaveElapsed = 0;
+            this.saveGame(0, true);
+          }
+        }
         const stats = this.terrain.stats;
         const vegetation = this.vegetation.stats;
         const roads = this.roads.stats;
@@ -1037,20 +1073,23 @@ export class Game {
     this.ui.setDialogue(null);
   }
 
-  /** Manual slots are separate from legacy per-seed object autosaves. */
-  saveGame(slot: number): void {
-    if (this.driving) { this.ui.toast('Exit the vehicle before saving a grounded player slot.'); return; }
-    if (!this.ready || !this.character.ready) { this.ui.toast('Wait for the world to finish loading.'); return; }
+  /** Manual slots are separate from legacy per-seed object autosaves. Slot 0 = autosave. */
+  saveGame(slot: number, silent = false): void {
+    if (this.driving) { if (!silent) this.ui.toast('Exit the vehicle before saving a grounded player slot.'); return; }
+    if (!this.ready || !this.character.ready) { if (!silent) this.ui.toast('Wait for the world to finish loading.'); return; }
     try {
       const p = this.character.position;
       const result = new GameSaveStore(localStorage).save(slot, {
-        format: 'wayfarer.game', version: 1, savedAt: Date.now(), seed: this.seed,
-        player: { x: p.x, z: p.z }, hour: this.sky.hour, cycling: this.sky.cycling,
+        format: 'wayfarer.game', version: 2, savedAt: Date.now(), seed: this.seed,
+        player: { x: p.x, z: p.z, yaw: this.character.yaw },
+        hour: this.sky.hour, cycling: this.sky.cycling,
+        weather: this.weather.overridden,
+        objectives: this.objectives.snapshot(),
         discovery: this.discovery.snapshot(), objects: { format: 'wayfarer.objects', version: 1, seed: this.seed,
           savedAt: Date.now(), objects: this.objects.serializeState(), inventory: this.inventory.stacks() },
       });
-      this.ui.toast(result.status === 'ok' ? `Saved slot ${slot}` : result.status === 'error' ? result.reason : 'Save unavailable');
-    } catch (error) { this.ui.toast(`Save failed: ${String(error)}`); }
+      if (!silent) this.ui.toast(result.status === 'ok' ? `Saved slot ${slot}` : result.status === 'error' ? result.reason : 'Save unavailable');
+    } catch (error) { if (!silent) this.ui.toast(`Save failed: ${String(error)}`); }
   }
 
   loadGame(slot: number): void {
@@ -1067,9 +1106,14 @@ export class Game {
       this.discovery.restore(save.discovery);
       this.sky.setHour(save.hour); this.sky.cycling = save.cycling;
       this.ui.syncTime(save.hour, save.cycling);
+      // A weather id from a newer build degrades to procedural weather
+      // instead of failing the load.
+      const weatherKinds: readonly string[] = ['clear', 'partly-cloudy', 'cloudy', 'overcast', 'rain', 'heavy-rain', 'storm', 'fog', 'snow', 'blizzard', 'windy'];
+      this.weather.setOverride(save.weather !== null && weatherKinds.includes(save.weather) ? save.weather as WeatherKind : null);
+      this.objectives.restore(save.objectives);
       this.rig.position.set(save.player.x, 450, save.player.z);
       this.rig.previous.copy(this.rig.position); this.rig.touring = false; this.rig.routeFollowing = false;
-      this.character.spawnAt(save.player.x, save.player.z);
+      this.character.spawnAt(save.player.x, save.player.z, save.player.yaw);
       this.setMode('character');
       this.origin.update(this.rig.position);
       this.updateURL();
@@ -1439,6 +1483,8 @@ export class Game {
     this.buildingExperience.dispose(); this.buildings.dispose();
     if (this.saveDirty) this.flushSave();
     this.discoveryPanel.dispose();
+    this.minimap.dispose();
+    this.objectives.dispose();
     this.input.dispose(); this.ui.dispose(); this.world.dispose();
     this.physicsDebug?.dispose();
     this.physics?.dispose();
