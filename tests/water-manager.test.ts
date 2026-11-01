@@ -71,6 +71,21 @@ function stream(manager: WaterManager, origin: FloatingOrigin, at: Vector3, seco
   }
 }
 
+/**
+ * The manager's per-call build budget is wall-clock milliseconds, so under a
+ * loaded CI machine one simulated second may not finish the ring. Streaming
+ * until the tile count stops growing makes the geometry assertions robust
+ * without changing the production budget.
+ */
+function streamUntilStable(manager: WaterManager, origin: FloatingOrigin, at: Vector3, rounds = 12): void {
+  let last = -1;
+  for (let i = 0; i < rounds; i++) {
+    stream(manager, origin, at);
+    if (manager.stats.tiles === last && manager.stats.builds === 0) return;
+    last = manager.stats.tiles;
+  }
+}
+
 const meshesOf = (manager: WaterManager): Mesh[] =>
   manager.group.children.filter((child): child is Mesh => child.type === 'Mesh');
 
@@ -92,7 +107,7 @@ describe('water material', () => {
 describe('water streaming', () => {
   it('builds tiles inside the streaming radius and none outside it', () => {
     const { manager, origin } = makeManager();
-    stream(manager, origin, new Vector3(0, SURFACE, 0));
+    streamUntilStable(manager, origin, new Vector3(0, SURFACE, 0));
     const meshes = meshesOf(manager);
     expect(meshes.length).toBeGreaterThan(0);
     for (const mesh of meshes) {
@@ -113,7 +128,7 @@ describe('water streaming', () => {
 
   it('keeps dry vertices under the ground so the shoreline is continuous', () => {
     const { manager, origin } = makeManager();
-    stream(manager, origin, new Vector3(0, SURFACE, 0));
+    streamUntilStable(manager, origin, new Vector3(0, SURFACE, 0));
     const landHeight = SURFACE + 20;
     let shoreline = 0, wet = 0;
     for (const mesh of meshesOf(manager)) {
@@ -170,7 +185,7 @@ describe('water streaming', () => {
 describe('water queries', () => {
   it('answer surface, depth and underwater state from the same field', () => {
     const { manager, origin } = makeManager();
-    stream(manager, origin, new Vector3(0, SURFACE, 0));
+    streamUntilStable(manager, origin, new Vector3(0, SURFACE, 0));
     const sample = manager.sampleAt(0, 0)!;
     expect(sample.surfaceY).toBe(SURFACE);
     expect(sample.depth).toBeCloseTo(8, 6);
@@ -187,7 +202,7 @@ describe('water queries', () => {
 
   it('can be switched off without destroying its geometry', () => {
     const { manager, origin } = makeManager();
-    stream(manager, origin, new Vector3(0, SURFACE, 0));
+    streamUntilStable(manager, origin, new Vector3(0, SURFACE, 0));
     const triangles = manager.stats.triangles;
     manager.setEnabled(false);
     expect(manager.group.visible).toBe(false);

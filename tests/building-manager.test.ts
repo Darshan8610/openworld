@@ -9,6 +9,7 @@ import { doorCollider } from '../src/world/buildings/collision';
 import { BUILDING_TEMPLATES } from '../src/world/buildings/templates';
 import { BUILDING_QUALITY } from '../src/world/buildings/settings';
 import type { BuildingCollider, BuildingEvent, BuildingInteraction } from '../src/world/buildings/types';
+import { buildingInteractionProvider } from '../src/interaction/building-provider';
 
 function setup(template = 'lodge') {
   const sites = new BuildingPlacementField('integration', { height: () => 100, roads: new RoadNetwork('integration', () => 100) });
@@ -143,4 +144,43 @@ describe('integrated building lifecycle', () => {
     f.dispose();
   });
 
+});
+
+describe('on-foot door interaction adapter', () => {
+  it('exposes streamed door bindings with live labels and a gated interact', () => {
+    const f = setup();
+    f.update();
+    const bindings = f.manager.interactions();
+    const door = bindings.find((binding) => binding.id === 'authored:main/door/entrance');
+    expect(door).toBeDefined();
+    const provider = buildingInteractionProvider(door!, (id) => f.manager.doorOpen(id));
+    expect(provider.id).toBe('authored:main/door/entrance');
+    expect(provider.state().open).toBe(false);
+    const action = provider.actions()[0]!;
+    const label = typeof action.label === 'function' ? action.label(provider.state()) : action.label;
+    expect(label).toMatch(/Open/);
+    // Out of range: the runtime refuses and the outcome says so.
+    const far = { actor: { position: { x: 0, y: 0, z: 0 } } } as unknown as Parameters<typeof action.run>[0];
+    expect(action.run(far)).toMatchObject({ message: expect.any(String) });
+    expect(f.manager.doorOpen(door!.id)).toBe(false);
+    // In range: the door swings and the label/state flip together.
+    const at = { actor: { position: f.observer } } as unknown as Parameters<typeof action.run>[0];
+    expect(action.run(at)).toBeUndefined();
+    expect(f.manager.doorOpen(door!.id)).toBe(true);
+    expect(provider.state().open).toBe(true);
+    const closeLabel = typeof action.label === 'function' ? action.label(provider.state()) : action.label;
+    expect(closeLabel).toMatch(/Close/);
+    f.dispose();
+  });
+
+  it('drops bindings from the registry when their building unloads', () => {
+    const f = setup();
+    f.update();
+    expect(f.manager.interactions().some((binding) => binding.id === 'authored:main/door/entrance')).toBe(true);
+    // Walk beyond the stream range: the shell (and its bindings) unload.
+    // Other procedural sites may exist at the far position — only our door must go.
+    f.update({ x: f.site.position.x, y: 102, z: f.site.position.z + 4000 });
+    expect(f.manager.interactions().some((binding) => binding.id === 'authored:main/door/entrance')).toBe(false);
+    f.dispose();
+  });
 });

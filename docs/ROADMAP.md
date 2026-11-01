@@ -29,13 +29,13 @@ systems a story will later plug into.
 | **4 — Core game engine & physics** ✅ | Rapier integration, canonical↔physics-local coordinates, rebase-safe bodies, streamed terrain heightfield colliders, physics materials, collision layers/events, debug visualisation, entity model + multilevel streaming, unified world query, typed event bus, world manager ordering | 1–3 |
 | **5 — Playable character** ✅ | Capsule character controller on the fixed step, locomotion state machine (walk/jog/sprint/crouch/jump/fall/land), slope and step handling, coyote time and jump buffering, third-person camera with collision avoidance, first-person option, GLTF humanoid + animation blending, swim foundation | 4 |
 | **6 — Objects & interaction** ✅ | Interactable interface (id, prompt, range, predicates, cooldown, persistent state), context-sensitive prompts, doors/containers/switches/pickups, physics props, object persistence. Gamepad + touch input abstraction remain pending | 4, 5 |
-| **7 — Buildings & interiors** | Modular building templates and prefabs, terrain-conforming placement, collision, room graphs, doors, stairs, furniture, interior lighting, indoor/outdoor transitions, interior streaming | 4, 6 |
+| **7 — Buildings & interiors** ✅ | Modular building templates and prefabs, terrain-conforming placement, collision, room graphs, doors, stairs, furniture, interior lighting, indoor/outdoor transitions, interior streaming | 4, 6 |
 | **8 — NPCs & life simulation** ✅ | NPC entities, behaviour FSM/behaviour trees, navmesh over streamed terrain, perception (vision cones, LOS, events), schedules, interaction/dialogue hooks, LOD population management, persistence | 4, 5, 7 |
 | **9 — Water & environment** ✅ | Lakes/rivers/ocean bodies, water shading with capability fallbacks, buoyancy via multi-point displacement, swimming/diving, splashes and wakes, weather controller (rain/snow/fog/storm) driving light, surface wetness, particles | 4, 5 |
-| **10 — Universal vehicles** | Shared vehicle interface (seats, entry/exit, camera, audio, damage, persistence) with distinct controllers: raycast-suspension road vehicles, motorcycle/bicycle balance, aircraft aerodynamics + helicopters, watercraft buoyancy/propulsion, sailing | 4, 9 |
-| **11 — Discovery & gameplay infrastructure** | World map + minimap from canonical coordinates, route calculation, waypoints, discovery/fog-of-war, save/load with versioned schemas and migration, inventory hooks, generic mission/objective/flag system on the event bus | 4–10 |
+| **10 — Universal vehicles** ✅ | Shared vehicle interface (seats, entry/exit, camera, audio, damage, persistence) with distinct controllers: raycast-suspension road vehicles, motorcycle/bicycle balance, aircraft aerodynamics + helicopters, watercraft buoyancy/propulsion, sailing | 4, 9 |
+| **11 — Discovery & gameplay infrastructure** ✅ | World chart + corner minimap from canonical coordinates, honest corridor route calculation (no fabricated cross-corridor itineraries), waypoints, discovery/fog-of-war, save/load v2 with v1 migration and silent autosave, inventory hooks, generic mission/objective/flag runtime on the event bus | 4–10 |
 | **12 — Audio, UX & polish** ✅ | Spatial audio with zones and mixing, procedural footsteps, main and pause menus, settings, accessibility, loading/recovery, presentation pass | all |
-| **13 — Optimisation & release** | Adaptive quality, profiling, browser matrix, memory and GPU fallback testing, long-run streaming, save validation, regression suite, production build | all |
+| **13 — Optimisation & release** ✅ | Bounded frame profiler (avg/p95 overlay), adaptive quality with player-set ceiling and announced steps, long-run streaming soak, save fuzz validation, physics-stability soak, memory-bound audit, regression suite (525 tests), production build. Hardware-WebGPU/browser matrix remain sandbox-limited (see INTEGRATION.md) | all |
 
 ## Phase 4 contracts that later phases must honour
 
@@ -128,16 +128,20 @@ These extend the Phase 4 contracts; both remain in force.
 
 ## Phase 11 implementation progress
 
-Milestone 11.1 adds a canonical-coordinate local chart, waypoint, bounded character
-exploration and three validated manual game-save slots. This is a partial Phase 11,
-not the completed map/navigation/mission system. See [PHASE11.md](PHASE11.md) for
-source audit, integration model, validation results and remaining work.
+Milestone 11.1 added the canonical-coordinate local chart, waypoint, bounded
+character exploration and three validated manual game-save slots. Milestone 11.2
+added honest corridor routing (`discovery/navigation.ts`), the live corner minimap,
+the story-independent mission/objective/flag runtime, save format v2 with v1
+migration and a silent 120 s autosave. See [PHASE11.md](PHASE11.md) for source
+audit, integration model, validation results and remaining work (NPC/vehicle/
+building persistence adapters into the game slots remain open).
 
 ## Combined branch integration
 
-Phases 1–12 are assembled in one tree, including Phase 9 (water & environment)
-from `arena/298dcffe-car-game`. Phase 11 remains milestone 11.1, not the complete
-discovery/gameplay roadmap. See
-[INTEGRATION.md](INTEGRATION.md) for merged source commits, validation and known
-cross-phase adapter gaps. Presence in the combined tree is not a declaration that
-all planned features of a phase are complete.
+Phases 1–13 are assembled in one tree, including Phase 9 (water & environment)
+from `arena/298dcffe-car-game`. The debug pass closed the character↔building
+collision, on-foot door and vehicle-audio adapter gaps; NPC interior navigation
+and game-slot persistence for NPCs/vehicles/buildings remain documented
+boundaries. See [INTEGRATION.md](INTEGRATION.md) for merged source commits,
+validation and known boundaries, and [PHASE13.md](PHASE13.md) for the release
+hardening results.

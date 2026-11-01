@@ -46,6 +46,12 @@ export interface GameEventMap {
   'npc:topicSelected': { id: string; topic: string; line: string };
   'npc:stateChanged': { id: string; role: string };
   'world:npcReset': { seed: string };
+  /** Phase 11 — mission/objective infrastructure. No story content, only events. */
+  'world:locationDiscovered': { x: number; z: number; cell: string };
+  'mission:started': { id: string };
+  'mission:objectiveCompleted': { id: string; missionId: string; label: string };
+  'mission:completed': { id: string };
+  'mission:flagSet': { name: string; value: boolean | number | string };
 }
 export type GameEventType = keyof GameEventMap;
 type Handler<K extends GameEventType> = (payload: GameEventMap[K]) => void;

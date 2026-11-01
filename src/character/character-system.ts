@@ -14,7 +14,7 @@ import type { CameraProbe, CameraSettings, CameraTarget } from './third-person-c
 import { NO_WATER, TerrainCharacterSampler } from './world-sampler';
 import { createPlaceholderCharacter, loadCharacterAsset } from './character-assets';
 import type { CharacterAsset } from './character-assets';
-import type { CharacterTuning, WaterQuery } from './locomotion';
+import type { CharacterSampler, CharacterTuning, WaterQuery } from './locomotion';
 import type { RigSemantic } from './rig';
 
 export interface CharacterSystemOptions {
@@ -26,6 +26,14 @@ export interface CharacterSystemOptions {
   reducedMotion: boolean;
   /** Extra solid geometry (buildings, props) the camera should not pass through. */
   colliders?: Object3D[];
+  /**
+   * Phase wiring: locomotion solid test for non-terrain geometry (buildings).
+   * `feetY` is the character's current foot height; the provider probes at
+   * mid-body. Optional — without it the sampler stays terrain-only.
+   */
+  blocked?: (x: number, z: number, feetY: number) => boolean;
+  /** Walkable elevated surface (porch, interior floor) at or above `baseY`. */
+  supportHeight?: (x: number, z: number, baseY: number) => number | undefined;
 }
 
 export interface CharacterSnapshot {
@@ -63,6 +71,8 @@ export class CharacterSystem {
   private animation?: AnimationController;
   private visual?: CharacterVisual;
   private readonly sampler: TerrainCharacterSampler;
+  /** Terrain + optional building solids; what the motion solver actually reads. */
+  private readonly motionSampler: CharacterSampler;
   private readonly raycaster = new Raycaster();
   private readonly probe: CameraProbe;
   private readonly colliders: Object3D[];
@@ -77,6 +87,7 @@ export class CharacterSystem {
   private readonly lookDirection = new Vector3();
   private spawnX = 0;
   private spawnZ = 0;
+  private spawnYaw: number | null = null;
   private spawned = false;
   private wasJumpHeld = false;
   private water: WaterQuery = NO_WATER;
@@ -87,6 +98,26 @@ export class CharacterSystem {
 
   constructor(private readonly options: CharacterSystemOptions) {
     this.sampler = new TerrainCharacterSampler(options.terrain);
+    // One sampler for the motion solver: terrain contact first, then any
+    // walkable building top (porch / interior floor) the player can step onto,
+    // and the building solid test for wall sliding. Without providers this
+    // degrades to exactly the old terrain-only behaviour.
+    const terrain = this.sampler;
+    const blocked = options.blocked;
+    const supportHeight = options.supportHeight;
+    this.motionSampler = {
+      contact: (x, z, out) => {
+        const contact = terrain.contact(x, z, out);
+        if (!contact) return contact;
+        const support = supportHeight?.(x, z, out.height);
+        if (support !== undefined && support > out.height && support - out.height <= 0.55) {
+          out.height = support;
+          out.normal.set(0, 1, 0);
+        }
+        return contact;
+      },
+      blocked: blocked ? (x, z, feetY) => blocked(x, z, feetY) : undefined,
+    };
     this.colliders = options.colliders ?? [];
     this.probe = {
       groundHeight: (x, z) => this.sampler.groundHeight(x, z),
@@ -129,12 +160,28 @@ export class CharacterSystem {
   setWater(query: WaterQuery | null): void { this.water = query ?? NO_WATER; }
 
   /** Queue a spawn at a canonical world XZ; the ground is resolved when streamed. */
-  spawnAt(x: number, z: number): void {
+  spawnAt(x: number, z: number, yaw?: number): void {
     this.spawnX = x;
     this.spawnZ = z;
+    this.spawnYaw = yaw ?? null;
     this.spawned = false;
     this.cameraRig.reset();
+    this.applySpawnYaw();
     if (this.visual) this.visual.root.visible = false;
+  }
+
+  /** Saved camera yaw (radians); restored through `spawnAt(x, z, yaw)`. */
+  get yaw(): number { return this.cameraRig.yaw; }
+
+  /**
+   * Re-apply a restored yaw after any reset. The camera rig owns the look
+   * direction; the body faces away from it (body yaw = camera yaw + π, the
+   * same relation `visualPose` uses every frame).
+   */
+  private applySpawnYaw(): void {
+    if (this.spawnYaw === null) return;
+    this.cameraRig.yaw = this.spawnYaw;
+    this.controller.yaw = this.spawnYaw + Math.PI;
   }
 
   get position(): Vector3 { return this.controller.position; }
@@ -172,7 +219,7 @@ export class CharacterSystem {
       jumpPressed,
     };
     this.previous.copy(this.controller.position);
-    this.controller.fixedUpdate(dt, state, this.cameraRig.yaw, this.sampler, this.water);
+    this.controller.fixedUpdate(dt, state, this.cameraRig.yaw, this.motionSampler, this.water);
     // Canonical position drives the floating origin, so the whole streamed world
     // follows the player instead of a survey camera.
     this.options.origin.update(this.controller.position);
@@ -242,6 +289,7 @@ export class CharacterSystem {
     this.controller.spawn(this.spawnX, ground + 0.05, this.spawnZ);
     this.previous.copy(this.controller.position);
     this.cameraRig.reset();
+    this.applySpawnYaw();
     this.spawned = true;
     if (this.visual) this.visual.root.visible = true;
   }
@@ -256,6 +304,7 @@ export class CharacterSystem {
     this.spawnWorld.copy(this.controller.position);
     this.safeGround.copy(this.controller.position);
     this.cameraRig.reset();
+    this.applySpawnYaw();
     this.spawned = true;
     if (this.visual) this.visual.root.visible = true;
     this.options.origin.update(this.controller.position);

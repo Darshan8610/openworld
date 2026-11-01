@@ -218,3 +218,50 @@ describe('Web Audio engine', () => {
     expect(context.resumeCount).toBe(1);
   });
 });
+
+describe('continuous vehicle loops', () => {
+  it('creates one voice per loud channel, updates in place and retires when silent', () => {
+    const context = new FakeContext();
+    const engine = new WebAudioEngine({ context });
+    // Silent world: no voices.
+    engine.setVehicleLoops({});
+    expect(context.oscillators).toHaveLength(0);
+    expect(context.bufferSources).toHaveLength(0);
+    // Engine (oscillator) + tyre (noise) come alive.
+    engine.setVehicleLoops({
+      engine: { gain: 0.8, pitch: 1.2 },
+      tyre: { gain: 0.5, pitch: 0.9 },
+    });
+    expect(context.oscillators).toHaveLength(1);
+    expect(context.bufferSources).toHaveLength(1);
+    expect(context.oscillators[0]!.startedAt).not.toBeNull();
+    expect(context.bufferSources[0]!.startedAt).not.toBeNull();
+    const gainCalls = context.gains.at(-1)!.gain.calls.length + context.gains.at(-2)!.gain.calls.length;
+    expect(gainCalls).toBeGreaterThan(0);
+    // Same channel again: update, never duplicate.
+    engine.setVehicleLoops({
+      engine: { gain: 0.4, pitch: 1.6 },
+      tyre: { gain: 0.2, pitch: 1.1 },
+    });
+    expect(context.oscillators).toHaveLength(1);
+    expect(context.bufferSources).toHaveLength(1);
+    // Silence retires the voices with a fade + stop.
+    engine.setVehicleLoops({ engine: { gain: 0, pitch: 1 }, tyre: { gain: 0, pitch: 1 } });
+    expect(context.oscillators[0]!.stoppedAt).not.toBeNull();
+    expect(context.bufferSources[0]!.stoppedAt).not.toBeNull();
+    // And silence does not resurrect them.
+    engine.setVehicleLoops({ engine: { gain: 0, pitch: 1 } });
+    expect(context.oscillators).toHaveLength(1);
+    // A new rev recreates a fresh voice.
+    engine.setVehicleLoops({ engine: { gain: 0.7, pitch: 1 } });
+    expect(context.oscillators).toHaveLength(2);
+    engine.dispose();
+    expect(context.oscillators.at(-1)!.stoppedAt).not.toBeNull();
+  });
+
+  it('is a silent no-op without a context', () => {
+    const engine = new WebAudioEngine({ context: null });
+    expect(() => engine.setVehicleLoops({ engine: { gain: 1, pitch: 1 } })).not.toThrow();
+    expect(engine.available).toBe(false);
+  });
+});

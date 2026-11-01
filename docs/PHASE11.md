@@ -89,3 +89,86 @@ handle; `snapshot().discovery` returns copied data.
 - Unit coverage includes negative/large coordinates, discovery limits, slot
   isolation, unsupported/corrupt data preservation, quota errors, invalid time,
   cross-seed object snapshots and invalid slot IDs.
+
+## Milestone 11.2: navigation, minimap, mission runtime and save v2
+
+Built on the integrated Phases 1–12 line (`3e6acba`). Still no authored story,
+no invented road links and no replacement of existing subsystems.
+
+### Honest navigation (`discovery/navigation.ts`)
+
+`planRoute(roads, from, to)` returns one of exactly two plans:
+
+- `corridor` — both endpoints snap within `snapRadius` (default 120 m) of the
+  **same** corridor; distance is real along-corridor travel plus both lateral
+  access walks, and the polyline is the corridor centreline itself;
+- `direct` — anything else; an explicitly labelled straight-line distance that
+  `describeRoute()` marks as “not a road route”. The corridor network has no
+  intersections, so cross-corridor itineraries are never fabricated.
+
+The world chart (M) now draws the corridor route to the waypoint in blue and
+reports the honest route description; `snapToRoad`/`nearestOnRoad` share the
+same projection. All inputs/outputs are canonical metres.
+
+### Live minimap (`ui/minimap.ts`)
+
+A 144 px north-up canvas at the bottom-left: discovered cells tinted by their
+analytic biome colour (unknown land stays dark), the nearby corridor centrelines
+(recomputed from the analytic field — no stored map), the waypoint (clamped to
+the rim when off-map) and a player arrow. Redraws are throttled to ~200 ms and
+skipped when nothing moved; a settings switch (“Corner minimap”) toggles it.
+Only canonical positions are read, so floating-origin rebases are invisible.
+
+### Mission / objective / flag runtime (`game/objectives.ts`)
+
+`ObjectiveRuntime` is story-independent infrastructure on the existing
+`GameEventBus`:
+
+- objectives of kind `event` (count bus events, optional payload match filter),
+  `flag` (named flag reaches a value) and `reach` (player enters a canonical
+  radius, fed from the fixed step);
+- typed events `mission:started|objectiveCompleted|completed|flagSet` and
+  `world:locationDiscovered` (emitted on first discovery-cell visit) were added
+  to `core/events.ts` for future narrative layers to observe;
+- bounded everywhere: ≤64 missions, ≤32 objectives each, ≤256 flags, string
+  length caps; registration, `snapshot()`/`restore()` and the save validator
+  all enforce them, so hostile progress is stripped, not trusted.
+
+No missions are registered in-game: content belongs to a later narrative phase.
+
+### Save format v2 + autosave
+
+`GameSave` is now **version 2**: `player` gains `yaw`, plus `weather`
+(override id or `null`) and `objectives` (mission progress). `validateGameSave`
+accepts v1 and v2 and migrates v1 → v2 (yaw 0, procedural weather, empty
+objectives); unknown versions are still refused, never overwritten. `GameSaveStore`
+slot 0 is the silent autosave (`wayfarer.game.autosave`); manual slots remain
+1–3. The game autosaves every 120 s of running time (never while driving or
+behind a menu). Load restores yaw through `character.spawnAt(x, z, yaw)` — the
+camera rig keeps the restored look direction and the body faces away from it —
+and restores the weather override (unknown ids degrade to procedural weather)
+and mission progress.
+
+### Keybindings and flake fix
+
+Weather moved from **M** to **U**: **M** is the world chart key and both
+handlers previously fired on one keypress. README control table and the pause
+hint were updated.
+
+The previously flaky `water-manager` shoreline test now streams until the tile
+count stabilises (`streamUntilStable`): the manager's per-call 4 ms wall-clock
+build budget legitimately truncates a pass under parallel-test load, and the
+old helper simulated only one second of streaming. Production budget behaviour
+is unchanged.
+
+### Validation (11.2)
+
+- Baseline before changes: `npx tsc --noEmit` clean; `npm test` 481/481 across
+  46 files (one water-manager test flaky under load, root-caused as above);
+  `npm run build` OK.
+- After milestone: `npx tsc --noEmit` clean; `npm test` **498/498 across 49
+  files** (new: objectives ×6, navigation ×5, minimap ×3; save tests extended
+  with v1 migration, autosave-slot isolation and hostile-objective rejection);
+  `npm run build` OK (Vite ~1.7 s).
+- Minimap rendering is covered with an injected fake canvas/document (drawing,
+  throttling, enable/disable); no browser executable was available for e2e here.

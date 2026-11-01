@@ -1,9 +1,16 @@
 import { vehicleWaterProvider } from '../vehicles/water-adapter';
 import { Discovery } from '../discovery/discovery';
+import type { MapPoint } from '../discovery/discovery';
 import { DiscoveryPanel } from '../ui/discovery-panel';
+import { Minimap } from '../ui/minimap';
+import { ObjectiveRuntime } from '../game/objectives';
+import { buildingInteractionProvider } from '../interaction/building-provider';
+import type { BuildingInteraction } from '../world/buildings/types';
+import { FrameProfiler } from './profiler';
+import { AdaptiveQualityController } from './adaptive-quality';
 import { GameSaveStore } from '../persistence/game-save';
 import { Scene, Fog, Vector3 } from 'three/webgpu';
-import type { PerspectiveCamera } from 'three/webgpu';
+import type { PerspectiveCamera, Object3D } from 'three/webgpu';
 import { CONFIG, QUALITY } from '../config';
 import type { QualityName } from '../config';
 import { createRenderer, resizeRenderer } from '../rendering/renderer';
@@ -82,6 +89,10 @@ import type { BuildingStorage } from '../world/buildings/state';
 export class Game {
   private readonly discovery = new Discovery();
   private readonly discoveryPanel: DiscoveryPanel;
+  /** Phase 11: live corner minimap (canonical coords only). */
+  private minimap: Minimap;
+  /** Last waypoint handed to the minimap (reference compare on setWaypoint). */
+  private lastWaypoint: MapPoint | null = null;
   private readonly scene = new Scene();
   private readonly origin = new FloatingOrigin();
   private readonly loop = new FixedLoop();
@@ -117,6 +128,21 @@ export class Game {
   private mode: ViewMode = 'character';
   /** Typed game-event layer shared by objects, interaction, audio and missions. */
   private readonly events = new GameEventBus();
+  /** Phase 11: mission/objective/flag runtime — infrastructure only, no story. */
+  private readonly objectives = new ObjectiveRuntime(this.events);
+  /** Seconds accumulated toward the silent 120 s autosave (slot 0). */
+  private autosaveElapsed = 0;
+  /** On-foot building bindings (doors) currently registered, by interaction id. */
+  private readonly doorProviders = new Map<string, BuildingInteraction>();
+  private doorSyncClock = 0;
+  /** Phase 13: bounded frame profiler + adaptive preset (never above the ceiling). */
+  private readonly profiler = new FrameProfiler();
+  private readonly adaptive = new AdaptiveQualityController();
+  private adaptiveEnabled = true;
+  /** Seconds since the last spawn re-anchor attempt (see the render loop). */
+  private spawnRescue = 0;
+  private qualityCeiling: QualityName;
+  private lastAdaptiveCheck = 0;
   private readonly store = new ObjectStateStore();
   private inventory!: Inventory;
   private queries!: WorldQueries;
@@ -132,6 +158,7 @@ export class Game {
   private wakeTimer = 0;
   private underwater = false;
   private readonly cameraWorld = new Vector3();
+  private readonly listenerDirection = new Vector3();
   private readonly wind = { x: 0, z: 0 };
   private propPhysics!: PropPhysicsWorld;
   private interaction!: InteractionManager;
@@ -178,7 +205,7 @@ export class Game {
   };
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
-    this.context = context; this.seed = seed; this.quality = quality;
+    this.context = context; this.seed = seed; this.quality = quality; this.qualityCeiling = quality;
     this.scene.name = 'Wayfarer / integrated Phases 1–12';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
@@ -206,6 +233,11 @@ export class Game {
     this.origin.update(position);
     // The playable character is the primary view; the survey rig stays parked on
     // the scenic route so switching (C) never loses the route context.
+    // Building wiring: walls block locomotion (with wall sliding), walkable
+    // floors/porches are step-on surfaces, and the third-person camera treats
+    // streamed building meshes as solids. The array is filled after the
+    // BuildingManager below is constructed.
+    const cameraSolids: Object3D[] = [];
     this.character = new CharacterSystem({
       scene: this.scene,
       terrain: this.terrain,
@@ -213,6 +245,9 @@ export class Game {
       input: this.input,
       quality,
       reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      colliders: cameraSolids,
+      blocked: (x, z, feetY) => this.buildings.blockedAt(x, z, feetY),
+      supportHeight: (x, z, baseY) => this.buildings.supportAt(x, z, baseY),
     });
     // Swimming reads the same water surface the renderer draws, waves included.
     this.character.setWater(this.water.swimQuery);
@@ -224,6 +259,7 @@ export class Game {
       seed, quality, origin: this.origin, terrain: this.terrain, storage: buildingStorage,
       onReservationsChanged: () => this.vegetation.invalidateReservations(),
     });
+    cameraSolids.push(this.buildings.group);
     this.vegetation.setReservationQuery((x, z) => this.buildings.field.isAuthoredReserved(x, z));
     this.sky = new SkySystem(context.renderer, this.scene, seed, quality);
     this.sky.setHour(hour);
@@ -287,6 +323,8 @@ export class Game {
       dialogueEnd: () => this.endDialogue(),
       water: (value) => { this.water.setEnabled(value); this.updateURL(); },
       weather: (value) => { this.weather.setOverride(value); this.updateURL(); },
+      minimap: (value) => this.minimap.setEnabled(value),
+      adaptiveQuality: (value) => { this.adaptiveEnabled = value; this.adaptive.reset(); },
       route: (value) => this.travelRoute(value),
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
@@ -343,6 +381,7 @@ export class Game {
     this.events.on('inventory:changed', () => { this.saveDirty = true; });
     if (this.restoreNotice) this.ui.toast(this.restoreNotice);
     this.discoveryPanel = new DiscoveryPanel(this.discovery, () => this.queries, slot => this.saveGame(slot), slot => this.loadGame(slot));
+    this.minimap = new Minimap(this.discovery, () => this.queries, document.body);
     this.input.onShortcut = (code) => {
       if (this.discoveryPanel.isOpen || this.ui.overlay !== 'none') return;
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
@@ -377,8 +416,8 @@ export class Game {
       if (code === 'KeyR') { if (this.mode === 'character') this.respawnPlayer(); else this.rig.reset(); }
 
       if (code === 'KeyJ') { this.water.setEnabled(!this.water.isEnabled); this.ui.syncWater(this.water.isEnabled, this.weather.overridden); }
-      // Weather pinning lives on M; N stays with the Phase 8 population toggle.
-      if (code === 'KeyM') {
+      // Weather pinning lives on U; M is the world map (DiscoveryPanel) and N stays with NPCs.
+      if (code === 'KeyU') {
         const kinds: (WeatherKind | null)[] = [null, 'clear', 'cloudy', 'rain', 'storm', 'fog', 'snow', 'blizzard'];
         const next = kinds[(kinds.indexOf(this.weather.overridden) + 1) % kinds.length] ?? null;
         this.weather.setOverride(next);
@@ -476,9 +515,16 @@ export class Game {
     }
   }
 
-  /** Active camera for rendering, sky and compilation. */
+  /**
+   * Active camera for rendering, sky and compilation. Mirrors
+   * resolveActivePosition()/renderActive(): until the character has actually
+   * spawned, the survey rig owns the view. Composing through the character's
+   * never-solved camera (parked at the local origin) paints an empty frame —
+   * the loading screen would hide it, but a spawn that cannot resolve after
+   * the world is ready would leave a black screen behind a live HUD.
+   */
   private get activeCamera(): PerspectiveCamera {
-    return this.mode === 'character' ? this.character.camera : this.rig.camera;
+    return this.mode === 'character' && this.character.ready ? this.character.camera : this.rig.camera;
   }
 
   /** Canonical world position the streaming systems follow. */
@@ -503,8 +549,12 @@ export class Game {
     // Keys pressed behind a menu or the title screen must never move the player.
     if (this.ui.overlay !== 'none') this.input.clear();
     try {
+      const frameStart = performance.now();
+      let fixedMs = 0;
+      let renderMs = 0;
       this.loop.tick(timestamp, (dt) => {
         if (!this.ready || this.discoveryPanel.isOpen) return;
+        const stepStart = performance.now();
         // Weather and the water surface are advanced on the fixed clock: buoyancy,
         // swimming and the wave phase must never depend on the render rate.
         this.stepEnvironment(dt);
@@ -520,15 +570,31 @@ export class Game {
         this.propPhysics.step(dt, this.groundSample);
         this.npcs.fixedUpdate(dt, this.resolveActivePosition());
         this.updateInteraction(dt);
+        // Mission infrastructure: feed the canonical player position so `reach`
+        // objectives evaluate on the fixed clock, never on render rate.
+        const missionFocus = this.resolveActivePosition();
+        this.objectives.updatePlayer(missionFocus.x, missionFocus.z);
+        fixedMs += performance.now() - stepStart;
       }, (alpha, dt) => {
+        const renderStart = performance.now();
         const focus = this.resolveActivePosition();
         this.cameraWorld.copy(this.activeCamera.position).add(this.origin.absolute);
         this.world.update(dt, focus, this.cameraWorld, this.simTime);
         this.presentEnvironment(dt);
         this.buildings.update(focus, dt, this.sky.hour);
         this.buildingExperience.update(timestamp);
-        if (this.ready && this.ui.overlay === 'none' && this.mode === 'character') this.discovery.visit(focus);
+        if (this.ready && this.ui.overlay === 'none' && this.mode === 'character' && this.discovery.visit(focus)) {
+          this.events.emit('world:locationDiscovered', {
+            x: focus.x, z: focus.z,
+            cell: `${Math.floor(focus.x / 256)}:${Math.floor(focus.z / 256)}`,
+          });
+        }
         this.discoveryPanel.update(focus, this.character.controller.yaw, timestamp);
+        this.minimap.update({ x: focus.x, z: focus.z, yaw: this.character.controller.yaw }, timestamp);
+        if (this.discovery.waypoint !== this.lastWaypoint) {
+          this.lastWaypoint = this.discovery.waypoint;
+          this.minimap.setWaypoint(this.lastWaypoint);
+        }
         if (!this.ready) {
           this.loadTime += dt;
           // Spawn as soon as the local grid exists; keep loading distant roots behind the overlay.
@@ -555,6 +621,18 @@ export class Game {
           if (this.terrain.lastError) this.fail(this.terrain.lastError);
           if (this.loadTime > 90 && !this.compileStarted) this.fail(new Error('Terrain generation timed out. Try the Low graphics preset or reload.'));
         }
+        // Spawn rescue: a queued spawn that cannot resolve (evicted tile, a
+        // restore point the window no longer covers) would leave the character
+        // unsolvable forever. Re-anchor it at the survey rig — whose ground the
+        // loader already proved — so the player always lands in a playable view.
+        if (this.ready && this.mode === 'character' && !this.driving && !this.character.ready) {
+          this.spawnRescue += dt;
+          if (this.spawnRescue >= 5) {
+            this.spawnRescue = 0;
+            this.character.spawnAt(this.rig.position.x, this.rig.position.z);
+            this.ui.toast('Re-anchoring the trailhead…');
+          }
+        } else this.spawnRescue = 0;
         this.renderActive(this.ready ? alpha : 1, dt);
         this.objects.update(dt, focus, this.origin.absolute, alpha);
         this.npcs.update(dt, focus, this.origin.absolute, alpha);
@@ -569,6 +647,15 @@ export class Game {
         this.post.setCamera(this.activeCamera);
         this.post.render(this.scene, this.activeCamera);
         if (this.saveDirty && this.ready && timestamp - this.lastSave > 4000) this.flushSave(timestamp);
+        // Phase 11: silent autosave every 120 s into slot 0 (never while
+        // driving or behind a menu — saveGame enforces both, silently here).
+        if (this.ready && this.ui.overlay === 'none') {
+          this.autosaveElapsed += dt;
+          if (this.autosaveElapsed >= 120) {
+            this.autosaveElapsed = 0;
+            this.saveGame(0, true);
+          }
+        }
         const stats = this.terrain.stats;
         const vegetation = this.vegetation.stats;
         const roads = this.roads.stats;
@@ -593,6 +680,8 @@ export class Game {
           x: focus.x, y: focus.y, z: focus.z,
           heading, time: this.sky.timeLabel, biome: biome.name,
           fps: this.loop.fps, calls: this.context.renderer.info.render.drawCalls,
+          frameP95Ms: this.profiler.frameP95Ms(), frameAvgMs: this.profiler.frameAvgMs(),
+          adaptiveQuality: this.adaptiveEnabled ? `${this.quality} ≤ ${this.qualityCeiling}` : 'off',
           triangles: this.context.renderer.info.render.triangles,
           geometries: this.context.renderer.info.memory.geometries,
           cached: stats.cached, pending: stats.pending, shifts: this.origin.shifts,
@@ -643,8 +732,34 @@ export class Game {
           bodiesInWater: this.buoyancy.stats.bodiesInWater,
           floatingBodies: this.buoyancy.stats.floating,
         }, timestamp);
+        renderMs += performance.now() - renderStart;
       });
+      this.profiler.record(performance.now() - frameStart, fixedMs, renderMs);
+      // Phase 13: consider a preset step once per second of running time.
+      if (frameStart - this.lastAdaptiveCheck >= 1000) {
+        this.lastAdaptiveCheck = frameStart;
+        this.considerAdaptiveQuality();
+      }
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
+  }
+
+  /**
+   * Phase 13: step the graphics preset on sustained frame-budget misses.
+   * Never above the player's own choice, never behind a menu, and always
+   * announced — adaptive quality is a visible aid, not a silent downgrade.
+   */
+  private considerAdaptiveQuality(): void {
+    if (!this.adaptiveEnabled || !this.ready || this.ui.overlay !== 'none') return;
+    const recommendation = this.adaptive.update(
+      { frameP95Ms: this.profiler.frameP95Ms(), current: this.quality, ceiling: this.qualityCeiling },
+      1,
+    );
+    if (recommendation && recommendation !== this.quality) {
+      this.ui.toast(`Adaptive quality: ${this.quality} → ${recommendation} (frame budget)`);
+      // setQuality re-streams; the controller's own cooldown starts on commit,
+      // so no reset here — a reset would wipe exactly that cooldown.
+      this.setQuality(recommendation, true);
+    }
   }
 
   /**
@@ -955,6 +1070,7 @@ export class Game {
   private rebuildGameplayLayer(seed: string): void {
     this.saveDirty = false;
     this.interaction.clear();
+    this.doorProviders.clear();
     this.propPhysics.clear();
     this.leaveVehicle();
     this.objects.dispose();
@@ -997,9 +1113,34 @@ export class Game {
     this.actor.yaw = yaw;
     const pressed = this.interactPressed;
     this.interactPressed = false;
+    // Keep the on-foot registry in step with streamed building bindings
+    // (doors). The building runtime enforces range/cooldown itself.
+    this.doorSyncClock += dt;
+    if (this.doorSyncClock >= 0.5) {
+      this.doorSyncClock = 0;
+      this.syncBuildingInteractions();
+    }
     const prompt = this.interaction.update(dt, this.actor, { pressed, down: this.input.down('KeyE') });
     this.ui.setPrompt(prompt);
     this.objects.focusTarget(this.interaction.targetId);
+  }
+
+  /** Register/unregister on-foot providers as buildings stream in and out. */
+  private syncBuildingInteractions(): void {
+    const seen = new Set<string>();
+    for (const binding of this.buildings.interactions()) {
+      seen.add(binding.id);
+      const existing = this.doorProviders.get(binding.id);
+      if (existing === binding) continue; // same runtime instance
+      if (existing) this.interaction.unregister(binding.id); // rebuilt binding: drop stale
+      this.doorProviders.set(binding.id, binding);
+      this.interaction.register(buildingInteractionProvider(binding, (id) => this.buildings.doorOpen(id)));
+    }
+    for (const [id] of this.doorProviders) {
+      if (seen.has(id)) continue;
+      this.doorProviders.delete(id);
+      this.interaction.unregister(id);
+    }
   }
 
   /** Persist only the object/inventory diff; never overwrite an unknown format. */
@@ -1037,20 +1178,23 @@ export class Game {
     this.ui.setDialogue(null);
   }
 
-  /** Manual slots are separate from legacy per-seed object autosaves. */
-  saveGame(slot: number): void {
-    if (this.driving) { this.ui.toast('Exit the vehicle before saving a grounded player slot.'); return; }
-    if (!this.ready || !this.character.ready) { this.ui.toast('Wait for the world to finish loading.'); return; }
+  /** Manual slots are separate from legacy per-seed object autosaves. Slot 0 = autosave. */
+  saveGame(slot: number, silent = false): void {
+    if (this.driving) { if (!silent) this.ui.toast('Exit the vehicle before saving a grounded player slot.'); return; }
+    if (!this.ready || !this.character.ready) { if (!silent) this.ui.toast('Wait for the world to finish loading.'); return; }
     try {
       const p = this.character.position;
       const result = new GameSaveStore(localStorage).save(slot, {
-        format: 'wayfarer.game', version: 1, savedAt: Date.now(), seed: this.seed,
-        player: { x: p.x, z: p.z }, hour: this.sky.hour, cycling: this.sky.cycling,
+        format: 'wayfarer.game', version: 2, savedAt: Date.now(), seed: this.seed,
+        player: { x: p.x, z: p.z, yaw: this.character.yaw },
+        hour: this.sky.hour, cycling: this.sky.cycling,
+        weather: this.weather.overridden,
+        objectives: this.objectives.snapshot(),
         discovery: this.discovery.snapshot(), objects: { format: 'wayfarer.objects', version: 1, seed: this.seed,
           savedAt: Date.now(), objects: this.objects.serializeState(), inventory: this.inventory.stacks() },
       });
-      this.ui.toast(result.status === 'ok' ? `Saved slot ${slot}` : result.status === 'error' ? result.reason : 'Save unavailable');
-    } catch (error) { this.ui.toast(`Save failed: ${String(error)}`); }
+      if (!silent) this.ui.toast(result.status === 'ok' ? `Saved slot ${slot}` : result.status === 'error' ? result.reason : 'Save unavailable');
+    } catch (error) { if (!silent) this.ui.toast(`Save failed: ${String(error)}`); }
   }
 
   loadGame(slot: number): void {
@@ -1067,9 +1211,14 @@ export class Game {
       this.discovery.restore(save.discovery);
       this.sky.setHour(save.hour); this.sky.cycling = save.cycling;
       this.ui.syncTime(save.hour, save.cycling);
+      // A weather id from a newer build degrades to procedural weather
+      // instead of failing the load.
+      const weatherKinds: readonly string[] = ['clear', 'partly-cloudy', 'cloudy', 'overcast', 'rain', 'heavy-rain', 'storm', 'fog', 'snow', 'blizzard', 'windy'];
+      this.weather.setOverride(save.weather !== null && weatherKinds.includes(save.weather) ? save.weather as WeatherKind : null);
+      this.objectives.restore(save.objectives);
       this.rig.position.set(save.player.x, 450, save.player.z);
       this.rig.previous.copy(this.rig.position); this.rig.touring = false; this.rig.routeFollowing = false;
-      this.character.spawnAt(save.player.x, save.player.z);
+      this.character.spawnAt(save.player.x, save.player.z, save.player.yaw);
       this.setMode('character');
       this.origin.update(this.rig.position);
       this.updateURL();
@@ -1135,8 +1284,10 @@ export class Game {
     this.updateURL();
   }
 
-  private setQuality(quality: QualityName): void {
+  private setQuality(quality: QualityName, adaptive = false): void {
     if (quality === this.quality) return;
+    // The player's own choice is the ceiling adaptive quality may reach.
+    if (!adaptive) this.qualityCeiling = quality;
     this.beginLoading();
     this.quality = quality;
     this.terrain.reset(this.seed, quality);
@@ -1346,16 +1497,16 @@ export class Game {
   private updateAudio(dt: number, focus: Vector3): void {
     if (!this.ready) return;
     this.captionClock += dt;
-    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); return; }
-    const onFoot = this.mode === 'character' && this.character.ready;
+    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); }
+    const onFoot = !this.driving && this.mode === 'character' && this.character.ready;
     const character = this.character.snapshot();
     const frame: AudioFrame = {
       player: { x: focus.x, y: focus.y, z: focus.z },
-      yaw: onFoot ? this.character.cameraRig.yaw : this.rig.yaw,
-      // The survey camera never makes footstep sounds; it has no feet.
+      yaw: this.listenerYaw(),
+      // The survey camera and the driving rig make no footstep sounds.
       speed: onFoot ? character.speed : 0,
       verticalSpeed: onFoot ? character.verticalSpeed : 0,
-      grounded: !onFoot || character.grounded,
+      grounded: this.driving ? true : (!onFoot || character.grounded),
       stance: onFoot ? character.stance : 'stand',
       swimming: onFoot && character.swimming,
       surface: this.queries.surface(focus.x, focus.z),
@@ -1365,13 +1516,72 @@ export class Game {
       windEnabled: this.vegetation.windEnabled,
     };
     this.audioDirector.update(dt, frame);
+    this.updateVehicleLoops();
     this.ui.setCaptions(this.captions.list(this.captionClock));
+  }
+
+  /** Listener yaw: character camera on foot, the active camera while driving. */
+  private listenerYaw(): number {
+    if (this.driving) {
+      this.activeCamera.getWorldDirection(this.listenerDirection);
+      return Math.atan2(-this.listenerDirection.x, -this.listenerDirection.z);
+    }
+    const onFoot = this.mode === 'character' && this.character.ready;
+    return onFoot ? this.character.cameraRig.yaw : this.rig.yaw;
+  }
+
+  /**
+   * Continuous vehicle audio: Phase 10 telemetry hooks (already stepped by the
+   * vehicle system) drive engine/tyre/rotor/wind loops with live gain+pitch,
+   * and their discrete edges become one-shot voices. Silent without a context.
+   */
+  private updateVehicleLoops(): void {
+    const hooks = this.driving ? this.vehicles.audioFor(this.driving.id) : undefined;
+    if (!hooks) {
+      this.audio.setVehicleLoops({});
+      return;
+    }
+    const c = hooks.channels;
+    this.audio.setVehicleLoops({
+      engine: { gain: Math.max(c.engine.gain, c.transmission.gain * 0.5), pitch: c.engine.pitch },
+      tyre: { gain: Math.max(c.tyre.gain, c.skid.gain), pitch: c.tyre.pitch },
+      rotor: { gain: Math.max(c.rotor.gain, c.propeller.gain), pitch: c.rotor.pitch },
+      wind: { gain: Math.max(c.wind.gain, c.water.gain * 0.6), pitch: c.wind.pitch },
+    });
+    // Discrete edges of the driven vehicle (the listener sits inside it: pan 0).
+    for (const event of hooks.drainEvents()) {
+      const intensity = event.intensity;
+      switch (event.kind) {
+        case 'impact':
+          this.audio.play({ sound: 'vehicle-impact', gain: 0.35 + 0.65 * intensity, pan: 0, rate: 1 });
+          break;
+        case 'touchdown':
+          this.audio.play({ sound: 'vehicle-impact', gain: 0.3 * intensity, pan: 0, rate: 1.15 });
+          break;
+        case 'gear-shift':
+          this.audio.play({ sound: 'vehicle-gear', gain: 0.5 * intensity, pan: 0, rate: 1 });
+          break;
+        case 'start':
+          this.audio.play({ sound: 'vehicle-start', gain: 0.8, pan: 0, rate: 1 });
+          break;
+        case 'stop':
+          this.audio.play({ sound: 'vehicle-stop', gain: 0.7, pan: 0, rate: 1 });
+          break;
+        case 'splash':
+          this.audio.play({ sound: 'vehicle-splash', gain: 0.4 + 0.5 * intensity, pan: 0, rate: 1 });
+          break;
+        case 'surface-change':
+          break; // the tyre loop already carries the rolling surface character
+      }
+    }
   }
 
   /** Resolve an event's world id to a position so its sound can be panned. */
   private locateSoundSource(id: string): { x: number; y: number; z: number } | undefined {
     const npc = this.npcs?.list().find((entry) => entry.id === id);
     if (npc) return { x: npc.x, y: npc.y, z: npc.z };
+    const vehicle = this.vehicles?.positionOf(id);
+    if (vehicle) return vehicle;
     const object = this.objects?.list().find((entry) => entry.id === id);
     if (object) return { x: object.x, y: object.y, z: object.z };
     return undefined;
@@ -1439,12 +1649,14 @@ export class Game {
     this.buildingExperience.dispose(); this.buildings.dispose();
     if (this.saveDirty) this.flushSave();
     this.discoveryPanel.dispose();
+    this.minimap.dispose();
+    this.objectives.dispose();
     this.input.dispose(); this.ui.dispose(); this.world.dispose();
     this.physicsDebug?.dispose();
     this.physics?.dispose();
     this.character.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
     this.audioDirector?.dispose(); this.audio?.dispose();
-    this.vehicles.dispose(); this.npcs.dispose(); this.objects.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
+    this.vehicles.dispose(); this.npcs.dispose(); this.objects.dispose(); this.interaction.clear(); this.doorProviders.clear(); this.propPhysics.clear(); this.events.clear();
     this.water.dispose(); this.particles.dispose();
     clearObjectGeometryCache();
     this.context.renderer.dispose(); this.context.canvas.remove();

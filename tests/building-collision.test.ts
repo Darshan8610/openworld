@@ -66,3 +66,35 @@ describe('building collision data and canonical queries', () => {
     index.removeBuilding(building.id); expect(index.size).toBe(0);
   });
 });
+
+describe('character-scale solid test (locomotion blocked())', () => {
+  const wallAt = (yaw: number): BuildingCollider => ({ ...wall, yaw });
+  it('blocks mid-body probes at walls but never walkable floors', () => {
+    const index = new BuildingCollisionIndex();
+    index.upsert(wall);
+    // Chest height (feet+0.9) inside the wall slab → solid.
+    expect(index.overlaps({ x: 0, y: 1.6, z: 0 }, 0.24)).toBe(true);
+    // Just clear of the slab → open.
+    expect(index.overlaps({ x: 0, y: 1.6, z: 0.6 }, 0.24)).toBe(false);
+    // A walkable floor under the feet is a standing surface, not a wall.
+    const floor: BuildingCollider = { id: 'floor', buildingId: building.id, center: { x: 0, y: 0.15, z: 3 }, half: { x: 4, y: 0.15, z: 2 }, yaw: 0, material: 'timber', kind: 'static', walkable: true };
+    index.upsert(floor);
+    expect(index.overlaps({ x: 0, y: 0.3, z: 3 }, 0.24)).toBe(false);
+    expect(index.overlaps({ x: 0, y: 0.3, z: 3 }, 0.24, false)).toBe(true);
+  });
+  it('respects collider yaw and far canonical coordinates', () => {
+    const index = new BuildingCollisionIndex();
+    index.upsert(wallAt(Math.PI / 2));
+    // Rotated 90°: the slab now spans Z, so an X-offset probe hits it.
+    expect(index.overlaps({ x: 0.1, y: 1.6, z: 0 }, 0.24)).toBe(true);
+    expect(index.overlaps({ x: 3, y: 1.6, z: 0 }, 0.24)).toBe(false);
+    const far = { ...wall, center: { x: 1e8, y: 1.5, z: -1e8 }, yaw: 0 };
+    const farIndex = new BuildingCollisionIndex();
+    farIndex.upsert(far);
+    expect(farIndex.overlaps({ x: 1e8, y: 1.6, z: -1e8 }, 0.24)).toBe(true);
+    expect(farIndex.overlaps({ x: 1e8 + 50, y: 1.6, z: -1e8 }, 0.24)).toBe(false);
+  });
+  it('never blocks on an empty index', () => {
+    expect(new BuildingCollisionIndex().overlaps({ x: 0, y: 0, z: 0 }, 1)).toBe(false);
+  });
+});

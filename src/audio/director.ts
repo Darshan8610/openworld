@@ -106,6 +106,7 @@ export class AudioDirector {
           const sound = interactionSoundFor(archetype, action);
           this.playAt(sound, this.locate?.(id));
         }),
+        events.on('vehicle:damaged', ({ id }) => this.playAt('vehicle-impact', this.locate?.(id), 0.8)),
         events.on('npc:talkStarted', ({ id }) => this.playAt('npc-greet', this.locate?.(id))),
         events.on('npc:topicSelected', ({ id }) => this.playAt('npc-reply', this.locate?.(id), 0.7)),
         events.on('npc:talkEnded', ({ id }) => this.playAt('npc-farewell', this.locate?.(id), 0.7)),

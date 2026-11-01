@@ -136,3 +136,34 @@ describe('prop rigid bodies', () => {
     expect(world.stats.substeps).toBeLessThanOrEqual(8);
   });
 });
+
+describe('Phase 13 physics stability', () => {
+  it('keeps a dense pile finite and asleep through a long settle', () => {
+    const world = new PropPhysicsWorld({ maxBodies: 64 });
+    const bodies = [];
+    for (let i = 0; i < 40; i++) {
+      const body = world.add({
+        id: `pile-${i}`,
+        position: { x: (i % 6) * 0.9 - 2, y: 1 + Math.floor(i / 6) * 1.1, z: (i % 4) * 0.9 - 1.5 },
+        shape: boxShape(0.4, 0.4, 0.4),
+        material: i % 3 === 0 ? 'wood' : i % 3 === 1 ? 'metal' : 'rubber',
+        mass: 10 + (i % 5),
+      });
+      expect(body).toBeDefined();
+      bodies.push(body!);
+    }
+    const ground = flatGround('gravel');
+    // 60 simulated seconds at the full fixed rate (7200 steps).
+    for (let step = 0; step < 7200; step++) world.step(1 / 120, ground);
+    let asleep = 0;
+    for (const body of bodies) {
+      const p = body.position;
+      expect(Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)).toBe(true);
+      expect(p.y).toBeGreaterThan(-2); // never fell through the world
+      expect(p.y).toBeLessThan(20); // never launched into orbit
+      if (body.sleeping) asleep++;
+    }
+    // Most of the pile must have settled to sleep (bounded energy).
+    expect(asleep).toBeGreaterThanOrEqual(30);
+  });
+});

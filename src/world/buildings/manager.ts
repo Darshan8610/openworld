@@ -131,6 +131,36 @@ export class BuildingManager {
     }
     return best;
   }
+
+  /** All streamed bindings (doors, …) for the on-foot interaction registry. */
+  interactions(): readonly BuildingInteraction[] {
+    const out: BuildingInteraction[] = [];
+    for (const instance of this.instances.values()) out.push(...instance.interactions);
+    return out;
+  }
+
+  /** Live open state for a door binding id (`<building>/door/<door>`). */
+  doorOpen(interactionId: string): boolean {
+    for (const instance of this.instances.values()) {
+      if (!interactionId.startsWith(`${instance.data.id}/`)) continue;
+      const doorId = interactionId.slice(instance.data.id.length + '/door/'.length);
+      return instance.doors.get(doorId)?.open ?? false;
+    }
+    return false;
+  }
+
+  /**
+   * Character-locomotion solid test (canonical metres). The probe sits at
+   * mid-body height so low walkable floors never trap the feet.
+   */
+  blockedAt(x: number, z: number, feetY: number, radius = 0.24): boolean {
+    return this.collision.overlaps({ x, y: feetY + 0.9, z }, radius);
+  }
+
+  /** Walkable building top (porch, interior floor) the character may step onto. */
+  supportAt(x: number, z: number, baseY: number, maxStep = 0.4): number | undefined {
+    return this.collision.supportHeight({ x, y: baseY, z }, maxStep);
+  }
   nearest(position: Point3): BuildingDescriptor | undefined { return this.field.nearest(position); }
   entrance(building: BuildingDescriptor): Point3 { return buildingToWorld(building, BUILDING_TEMPLATES.get(building.template).entrance); }
   graph(id: string) { return this.instances.get(id)?.graph(); }

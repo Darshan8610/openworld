@@ -60,10 +60,16 @@ export interface UIActions {
   /** Phase 9: water surface streaming and the weather override. */
   water: (enabled: boolean) => void;
   weather: (kind: WeatherKind | null) => void;
+  /** Phase 11: corner minimap. */
+  minimap: (enabled: boolean) => void;
+  /** Phase 13: adaptive quality stepping (never above the chosen preset). */
+  adaptiveQuality: (enabled: boolean) => void;
 }
 export interface UIStats {
   x: number; y: number; z: number; heading: number; time: string; biome: string;
   fps: number; calls: number; triangles: number; geometries: number; cached: number;
+  /** Phase 13: bounded profiler window + adaptive-preset state. */
+  frameP95Ms: number; frameAvgMs: number; adaptiveQuality: string;
   pending: number; shifts: number; backend: BackendName; touring: boolean; speed: number;
   lod: number[]; progress: number;
   vegetation: number; vegetationBatches: number; vegetationCapacity: number;
@@ -131,7 +137,7 @@ export function pauseMarkup(): string {
               <li><kbd>E</kbd> interact / talk · <kbd>1</kbd>–<kbd>4</kbd> reply</li>
               <li><kbd>C</kbd> survey camera · <kbd>F</kbd> first person</li>
               <li><kbd>N</kbd> people · <kbd>O</kbd> objects · <kbd>V</kbd> vegetation</li>
-              <li><kbd>J</kbd> water · <kbd>M</kbd> weather · <kbd>Q</kbd> vehicle</li>
+              <li><kbd>J</kbd> water · <kbd>U</kbd> weather · <kbd>M</kbd> map · <kbd>Q</kbd> vehicle</li>
               <li><kbd>F3</kbd> performance · <kbd>Esc</kbd> pause</li>
             </ul>
           </div>
@@ -226,6 +232,10 @@ Just you, and what’s over the next ridge.</p>${menuFieldsMarkup(seed, quality)
           <label class="switch-row" for="lod"><span>Show terrain LOD<small>Color by geometry detail</small></span><input type="checkbox" id="lod" role="switch"></label>
           <label class="switch-row" for="wireframe"><span>Wireframe</span><input type="checkbox" id="wireframe" role="switch"></label>
           <label class="switch-row" for="show-stats"><span>Performance overlay <kbd>F3</kbd></span><input type="checkbox" id="show-stats" role="switch"></label>
+          <div class="nature-heading"><span class="eyebrow">MAP & NAVIGATION</span><span>PHASE 11</span></div>
+          <label class="switch-row" for="minimap"><span>Corner minimap<small>North-up · roads appear as surveyed</small></span><input type="checkbox" id="minimap" checked role="switch"></label>
+          <div class="nature-heading"><span class="eyebrow">RELEASE & PERFORMANCE</span><span>PHASE 13</span></div>
+          <label class="switch-row" for="adaptive-quality"><span>Adaptive quality<small>Steps down on sustained frame misses · never above your preset</small></span><input type="checkbox" id="adaptive-quality" checked role="switch"></label>
           <div class="nature-heading"><span class="eyebrow">WATER & WEATHER</span><span>PHASE 09</span></div>
           <label class="switch-row" for="water"><span>Water surfaces <kbd>J</kbd><small id="water-status">Lakes, rivers & seas · buoyancy on</small></span><input type="checkbox" id="water" checked role="switch"></label>
           <label class="field-label" for="weather-select">Weather<output id="weather-value">Auto</output></label>
@@ -328,6 +338,8 @@ export class Interface {
       actions.dialogueTopic(Number(button.dataset.topic ?? '0'));
     });
     on('water', 'change', () => actions.water($<HTMLInputElement>('#water').checked));
+    on('minimap', 'change', () => actions.minimap($<HTMLInputElement>('#minimap').checked));
+    on('adaptive-quality', 'change', () => actions.adaptiveQuality($<HTMLInputElement>('#adaptive-quality').checked));
     on('weather-select', 'change', () => {
       const value = $<HTMLSelectElement>('#weather-select').value;
       actions.weather(value === 'auto' ? null : value as WeatherKind);
@@ -660,6 +672,8 @@ export class Interface {
     if (this.statsVisible) $('#performance').textContent = [
       `${stats.backend}  /  ${stats.fps.toFixed(0)} FPS`,
       `Frame       ${(1000 / Math.max(1, stats.fps)).toFixed(1)} ms`,
+      `Frame p95   ${stats.frameP95Ms.toFixed(1)} ms · avg ${stats.frameAvgMs.toFixed(1)} ms`,
+      `Adaptive    ${stats.adaptiveQuality}`,
       `Draw calls  ${stats.calls}`,
       `Triangles   ${Math.round(stats.triangles).toLocaleString()}`,
       `Geometries  ${stats.geometries}`,
