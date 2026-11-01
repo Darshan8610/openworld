@@ -103,7 +103,7 @@ test('buildings, collisions and transparent windows work after a large-coordinat
   expect(Math.abs(s.position[2]! - s.origin[2]!)).toBeLessThanOrEqual(2048);
   expect(loaded.position).toEqual(far!.position);
   expect(loaded.interiorLoaded).toBe(true); expect(s.buildings.colliders).toBeGreaterThan(50);
-  await page.getByRole('button', { name: 'World settings' }).click();
+  await page.locator('#settings-toggle').click();
   await page.locator('#building-collision').check();
   await expect(page.locator('#building-collision')).toBeChecked();
   expect(errors).toEqual([]); await expect(page.locator('#fatal')).toBeHidden();
@@ -114,7 +114,7 @@ test('the existing settings panel can visit architecture without a special launc
   const errors: string[] = []; page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/?renderer=webgl&quality=low&seed=playwright&vegetation=0');
   await page.waitForFunction(() => window.__WAYFARER__?.snapshot().ready, null, { timeout: 90_000 });
-  await page.getByRole('button', { name: 'World settings' }).click();
+  await page.locator('#menu-settings').click();
   await page.locator('#visit-building').click();
   await page.waitForFunction(() => {
     const s = window.__WAYFARER__?.snapshot(); return s?.ready && s.inspecting && s.buildings.interiors === 1;

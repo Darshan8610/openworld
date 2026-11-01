@@ -279,7 +279,7 @@ export class Game {
       title: () => location.reload(),
       uiSound: (sound) => this.audioDirector.ui(sound),
     });
-    this.buildingExperience = new BuildingExperience(this.buildings, this.rig, this.terrain, { loading: () => { this.setMode('survey'); this.beginLoading(); }, changed: () => this.updateURL(), toast: (message) => this.ui.toast(message) });
+    this.buildingExperience = new BuildingExperience(this.buildings, this.rig, this.terrain, { loading: () => { this.ui.enterWorld(); this.setMode('survey'); this.beginLoading(); }, changed: () => this.updateURL(), toast: (message) => this.ui.toast(message) });
     this.ui.syncTime(hour, this.sky.cycling);
     this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
     this.ui.syncPost(this.post.isEnabled);

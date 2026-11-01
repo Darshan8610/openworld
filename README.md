@@ -1,10 +1,10 @@
 # Wayfarer — Infinite Open-World Game
 
-**Phases 1–6, 8 and 12 combined: a seeded, infinite world you can walk, hear, inspect, touch and share with other people.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, synthesised spatial audio with ambience zones, a title/pause menu shell with a real mix and accessibility options, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
+**Phases 1–8 and 10–12 combined (Phase 11 milestone 11.1): a seeded, infinite world you can walk, hear, inspect, touch and share with other people.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, synthesised spatial audio with ambience zones, a title/pause menu shell with a real mix and accessibility options, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
 
 Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers and Rapier 3D.
 
-> This branch merges the Phase 4 (engine/physics), Phase 5 (playable character), Phase 6 (objects/interaction), Phase 8 (NPCs & life simulation) and Phase 12 (audio/UX/accessibility) lines. Buildings/interiors (Phase 7) are being built on a separate line; water and weather (9), vehicles (10), discovery/gameplay infrastructure (11) and the story layer remain later phases — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> This integration combines the existing Phases 1–8, 10, 11.1 and 12. **Phase 9 is intentionally excluded** while its water/environment work continues. Phase 11 remains partial; combining branches does not make every roadmap feature complete. See [integration notes](docs/INTEGRATION.md) for source branches, verification and remaining seams.
 
 ## Quick start
 
@@ -18,8 +18,8 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 300 unit/integration tests across 29 files
-npm run test:browser  # 23 Playwright browser tests (requires Chromium)
+npm test              # 434 unit/integration tests across 38 files
+npm run test:browser  # Playwright browser suite (requires Chromium)
 ```
 
 For browser tests, install Chromium once:
@@ -249,7 +249,7 @@ The phase lines were developed against the same Phase 3 base, so this branch rec
 - Chunk geometry, materials, instance buffers, textures and object geometry caches are disposed on eviction, seed change, quality change, and teardown.
 - Audio is hard-capped at 24 voices (per-bus 4/16/6) with a single shared 2-second generated noise buffer; ambience decisions run at 4 Hz, footsteps are distance-driven, and a paused game suspends the audio context entirely.
 - The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, instanced batch count, physics bodies/colliders/step time, streamed ground colliders, entity simulation levels, object counts, prop bodies, the interaction target, and audio state/voices/capacity/drops/zone/steps.
-- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The merged branch was verified with `tsc --noEmit`, `npm run build` and 300 unit/integration tests across 29 files; run `npm run test:browser` on a machine with Chromium for the end-to-end pass.
+- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The combined branch passes the production build and 434 unit/integration tests. Selected WebGL2 browser checks passed; the full browser suite and hardware WebGPU were not validated. See [integration notes](docs/INTEGRATION.md).
 
 ## Assets and licenses
 

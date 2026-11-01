@@ -132,3 +132,11 @@ Milestone 11.1 adds a canonical-coordinate local chart, waypoint, bounded charac
 exploration and three validated manual game-save slots. This is a partial Phase 11,
 not the completed map/navigation/mission system. See [PHASE11.md](PHASE11.md) for
 source audit, integration model, validation results and remaining work.
+
+## Combined branch integration
+
+Phases 1–8, 10, Phase 11 milestone 11.1, and 12 are now assembled in one tree.
+Phase 9 remains intentionally excluded while under development. See
+[INTEGRATION.md](INTEGRATION.md) for merged source commits, validation and known
+cross-phase adapter gaps. Presence in the combined tree is not a declaration that
+all planned features of a phase are complete.
