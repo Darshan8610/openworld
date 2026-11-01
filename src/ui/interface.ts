@@ -1,5 +1,6 @@
 import type { BackendName } from '../rendering/renderer';
 import type { QualityName } from '../config';
+import { BIOMES } from '../world/biomes';
 
 export interface UIActions {
   seed: (seed: string) => void;
@@ -13,6 +14,10 @@ export interface UIActions {
   lock: () => void;
   debug: (enabled: boolean) => void;
   wireframe: (enabled: boolean) => void;
+  biomeDebug: (enabled: boolean) => void;
+  vegetation: (enabled: boolean) => void;
+  wind: (enabled: boolean) => void;
+  detail: (enabled: boolean) => void;
   stats: (enabled: boolean) => void;
 }
 export interface UIStats {
@@ -20,6 +25,7 @@ export interface UIStats {
   fps: number; calls: number; triangles: number; geometries: number; cached: number;
   pending: number; shifts: number; backend: BackendName; touring: boolean; speed: number;
   lod: number[]; progress: number;
+  vegetation: number; vegetationBatches: number; vegetationCapacity: number;
 }
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id.replace(/^#/, '')) as T;
 
@@ -40,7 +46,7 @@ export class Interface {
         <div class="compass" aria-label="Compass"><span>W</span><i></i><span>N</span><i></i><span>E</span><b id="heading">033°</b></div>
         <section class="intro" id="intro"><div class="eyebrow"><span></span> THE INFINITE WORLD PROJECT</div><h1>Take the
 long way home.</h1><p>No finish line. No edge of the map.
-Just you, and what’s over the next ridge.</p><button class="primary" id="explore">Explore the world <span>↗</span></button><div class="phase-note">PHASE 01 <span>·</span> FREE-FLIGHT WORLD PREVIEW</div></section>
+Just you, and what’s over the next ridge.</p><button class="primary" id="explore">Explore the world <span>↗</span></button><div class="phase-note">PHASE 02 <span>·</span> A LIVING, LAYERED WORLD</div></section>
         <aside class="settings" id="settings" aria-label="World settings" hidden>
           <div class="panel-heading"><div><span class="eyebrow">MAKE IT YOURS</span><h2>World settings</h2></div><button class="icon-button" id="settings-close" aria-label="Close settings">×</button></div>
           <label class="field-label" for="seed">World seed <span>Same seed. Same world.</span></label>
@@ -50,14 +56,20 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <div class="range-labels"><span>Midnight</span><span>Noon</span><span>Midnight</span></div>
           <label class="switch-row" for="cycle"><span>Let the day unfold<small>A full day in 12 minutes</small></span><input type="checkbox" id="cycle" checked role="switch"></label>
           <label class="field-label" for="quality">Graphics preset</label><select id="quality"><option value="low">Low · lighter on your device</option><option value="balanced">Balanced · recommended</option><option value="high">High · extended horizons</option></select>
+          <div class="nature-heading"><span class="eyebrow">THE LIVING LANDSCAPE</span><span>05 BIOMES</span></div>
+          <label class="switch-row" for="vegetation"><span>Vegetation <kbd>V</kbd><small>Trees, sage, grass & weathered stone</small></span><input type="checkbox" id="vegetation" checked role="switch"></label>
+          <label class="switch-row" for="wind"><span>Wind in the canopy<small>Procedural, height-weighted motion</small></span><input type="checkbox" id="wind" checked role="switch"></label>
+          <label class="switch-row" for="detail"><span>Terrain surface detail<small>Triplanar grass, rock & snow</small></span><input type="checkbox" id="detail" checked role="switch"></label>
+          <label class="switch-row" for="biome-debug"><span>Biome map <kbd>B</kbd><small>Inspect the climate regions</small></span><input type="checkbox" id="biome-debug" role="switch"></label>
           <label class="switch-row" for="lod"><span>Show terrain LOD<small>Color by geometry detail</small></span><input type="checkbox" id="lod" role="switch"></label>
           <label class="switch-row" for="wireframe"><span>Wireframe</span><input type="checkbox" id="wireframe" role="switch"></label>
           <label class="switch-row" for="show-stats"><span>Performance overlay <kbd>F3</kbd></span><input type="checkbox" id="show-stats" role="switch"></label>
           <div class="panel-buttons"><button id="reset">Reset viewpoint</button><button id="share">Copy world link ↗</button></div>
-          <p class="panel-note">Terrain, sky & origin foundation. Driving physics, roads and vegetation are upcoming phases.</p>
+          <p class="panel-note">Climate, surfaces & vegetation are live. Roads and driving physics are upcoming phases.</p>
         </aside>
+        <div class="biome-legend" id="biome-legend" hidden><span class="eyebrow">CLIMATE OVERLAY</span>${BIOMES.map((biome) => `<span><i style="background:#${biome.color.toString(16).padStart(6, '0')}"></i>${biome.name}</span>`).join('')}</div>
         <pre class="performance" id="performance" aria-label="Performance statistics" hidden></pre>
-        <footer class="bottom-hud"><div class="location"><span class="eyebrow"><i></i> <span id="location-name">ALPINE HIGHLANDS</span></span><div class="coordinates" id="coordinates">E 0.000 <span>/</span> N 0.000</div><div class="location-meta"><span id="altitude">ALT 420 M</span><span>SEED <b id="seed-label"></b></span></div></div>
+        <footer class="bottom-hud"><div class="location"><span class="eyebrow"><i></i> <span id="location-name">VALLEY MEADOWS</span></span><div class="coordinates" id="coordinates">E 0.000 <span>/</span> N 0.000</div><div class="location-meta"><span id="altitude">ALT 420 M</span><span>SEED <b id="seed-label"></b></span></div></div>
           <div class="controls-hint"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly</span><span><kbd>Q</kbd><kbd>E</kbd> altitude</span><span><kbd>⇧</kbd> boost</span><span>Drag to look</span></div>
           <div class="travel"><button id="tour" aria-pressed="true"><span class="tour-dot"></span><span id="tour-label">Scenic flight</span><span id="tour-state">ON</span></button><div class="clock"><span id="clock">16:24</span><span id="speed">110 M/S CRUISE</span></div></div>
         </footer>
@@ -85,11 +97,25 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     on('reset', 'click', () => { actions.reset(); this.toast('Back to where the journey began'); });
     on('lod', 'change', () => actions.debug($<HTMLInputElement>('#lod').checked));
     on('wireframe', 'change', () => actions.wireframe($<HTMLInputElement>('#wireframe').checked));
+    on('biome-debug', 'change', () => actions.biomeDebug($<HTMLInputElement>('#biome-debug').checked));
+    on('vegetation', 'change', () => actions.vegetation($<HTMLInputElement>('#vegetation').checked));
+    on('wind', 'change', () => actions.wind($<HTMLInputElement>('#wind').checked));
+    on('detail', 'change', () => actions.detail($<HTMLInputElement>('#detail').checked));
     on('show-stats', 'change', () => this.showStats($<HTMLInputElement>('#show-stats').checked));
     on('retry', 'click', () => location.reload());
     on('compatibility', 'click', () => { const url = new URL(location.href); url.searchParams.set('renderer', 'webgl'); location.href = url.href; });
     window.addEventListener('keydown', (event) => { if (event.code === 'Escape') settings(false); }, { signal: this.abort.signal });
     document.addEventListener('pointerlockchange', () => { document.body.classList.toggle('pointer-locked', document.pointerLockElement !== null); }, { signal: this.abort.signal });
+  }
+
+  syncDebug(lod: boolean, biome: boolean): void {
+    $<HTMLInputElement>('#lod').checked = lod;
+    $<HTMLInputElement>('#biome-debug').checked = biome;
+    $('#biome-legend').hidden = !biome;
+  }
+  syncNature(vegetation: boolean, wind: boolean): void {
+    $<HTMLInputElement>('#vegetation').checked = vegetation;
+    $<HTMLInputElement>('#wind').checked = wind;
   }
 
   dismissIntro(): void { $('#intro').classList.add('dismissed'); }
@@ -110,6 +136,7 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     if (now - this.lastUpdate < 180) return;
     this.lastUpdate = now;
     $('#coordinates').innerHTML = `E ${(stats.x / 1000).toFixed(3)} <span>/</span> N ${(-stats.z / 1000).toFixed(3)} <small>km</small>`;
+    $('#location-name').textContent = stats.biome.toUpperCase();
     $('#altitude').textContent = `ALT ${Math.round(stats.y).toLocaleString()} M`;
     $('#heading').textContent = `${String(Math.round(stats.heading)).padStart(3, '0')}°`;
     $('#clock').textContent = stats.time;
@@ -129,6 +156,8 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
       `Geometries  ${stats.geometries}`,
       `Tiles       ${stats.cached} cached / ${stats.pending} queued`,
       `Origin      ${stats.shifts} rebases`,
+      `Plants      ${stats.vegetation.toLocaleString()} / ${stats.vegetationCapacity.toLocaleString()} slots`,
+      `Batches     ${stats.vegetationBatches} instanced`,
       `LOD 0–5     ${stats.lod.join(' · ')}`,
     ].join('\n');
   }

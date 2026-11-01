@@ -22,7 +22,9 @@ export class FloatingOrigin {
 
   update(world: Vector3): void {
     const threshold = CONFIG.origin.rebaseDistance;
-    if (Math.max(Math.abs(world.x), Math.abs(world.y), Math.abs(world.z)) < threshold) return;
+    // Measure displacement from the CURRENT origin, not from world zero.
+    // This also rebases when travelling back toward zero after a long journey.
+    if (Math.max(Math.abs(world.x - this.absolute.x), Math.abs(world.y - this.absolute.y), Math.abs(world.z - this.absolute.z)) < threshold) return;
     const next = new Vector3(
       Math.round(world.x / threshold) * threshold,
       Math.round(world.y / threshold) * threshold,

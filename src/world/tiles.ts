@@ -24,6 +24,10 @@ export interface TileResult {
   positions: Float32Array;
   normals: Float32Array;
   colors: Float32Array;
+  /** Per-vertex rock weight, snow weight, dominant biome id. */
+  surface: Float32Array;
+  /** Packed canonical vegetation records in tile-local XZ coordinates. */
+  vegetation: Float32Array;
   indices: Uint32Array;
   minHeight: number;
   maxHeight: number;

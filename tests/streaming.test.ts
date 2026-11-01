@@ -48,6 +48,15 @@ describe('floating origin', () => {
     }
     expect(origin.shifts).toBeGreaterThan(90);
   });
+  it('also rebases when returning toward world zero', () => {
+    const origin = new FloatingOrigin();
+    origin.update(new Vector3(100000, 400, -100000));
+    const before = origin.shifts;
+    origin.update(new Vector3(97000, 400, -97000));
+    expect(origin.shifts).toBeGreaterThan(before);
+    expect(Math.abs(97000 - origin.x)).toBeLessThanOrEqual(CONFIG.origin.rebaseDistance);
+    expect(Math.abs(-97000 - origin.z)).toBeLessThanOrEqual(CONFIG.origin.rebaseDistance);
+  });
 });
 
 describe('fixed clock', () => {

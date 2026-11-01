@@ -2,6 +2,9 @@ import { TerrainField } from './terrain-field';
 import { tileSize, tileKey } from './tiles';
 import type { TileRequest, TileResult } from './tiles';
 import { CONFIG } from '../config';
+import { createClimateSample } from './biomes';
+import { clamp } from '../utils/math';
+import { generateVegetation } from './vegetation-field';
 
 /**
  * Pure chunk builder. Runs inside a worker in production and directly in unit
@@ -16,6 +19,8 @@ export function generateTile(request: TileRequest, terrain: TerrainField): TileR
   const positions = new Float32Array(count * 3);
   const normals = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
+  const surface = new Float32Array(count * 3);
+  const climate = createClimateSample();
   const heights = new Float32Array(gridSize);
   const indices = new Uint32Array(n * n * 6 + 4 * n * 6);
   let minHeight = Infinity, maxHeight = -Infinity;
@@ -40,7 +45,11 @@ export function generateTile(request: TileRequest, terrain: TerrainField): TileR
     normals[index * 3] = -dx / length;
     normals[index * 3 + 1] = 1 / length;
     normals[index * 3 + 2] = -dz / length;
-    terrain.color(x, z, h, 1 - 1 / length, colors, index * 3);
+    terrain.sample(x, z, h, 1 - 1 / length, climate);
+    terrain.biomes.color(x, z, climate, colors, index * 3);
+    surface[index * 3] = climate.rock;
+    surface[index * 3 + 1] = climate.snow;
+    surface[index * 3 + 2] = climate.dominant;
   }
 
   let cursor = 0;
@@ -65,6 +74,7 @@ export function generateTile(request: TileRequest, terrain: TerrainField): TileR
         positions[next * 3 + axis] = positions[source * 3 + axis]!;
         normals[next * 3 + axis] = normals[source * 3 + axis]!;
         colors[next * 3 + axis] = colors[source * 3 + axis]!;
+        surface[next * 3 + axis] = surface[source * 3 + axis]!;
       }
       positions[next * 3 + 1] = positions[next * 3 + 1]! - skirt;
       next++;
@@ -76,10 +86,21 @@ export function generateTile(request: TileRequest, terrain: TerrainField): TileR
     }
   }
 
+  // Root plants on the actual rendered triangles, not the smooth field: coarse
+  // LODs would otherwise leave trunks floating above or buried under the mesh.
+  const surfaceHeight = (x: number, z: number): number => {
+    const fx = clamp((x - left) / step, 0, n - 0.00001);
+    const fz = clamp((z - top) / step, 0, n - 0.00001);
+    const ix = Math.floor(fx), iz = Math.floor(fz), u = fx - ix, v = fz - iz;
+    const a = heights[iz * stride + ix]!, b = heights[iz * stride + ix + 1]!;
+    const c = heights[(iz + 1) * stride + ix]!, d = heights[(iz + 1) * stride + ix + 1]!;
+    return u + v <= 1 ? a + (b - a) * u + (c - a) * v : d + (c - d) * (1 - u) + (b - d) * (1 - v);
+  };
+
   return {
     type: 'tile', id: request.id, epoch: request.epoch, key: tileKey(request),
     coord: { x: request.x, z: request.z, level: request.level, rootX: request.rootX, rootZ: request.rootZ },
-    segments: n, positions, normals, colors, indices,
+    segments: n, positions, normals, colors, surface, vegetation: generateVegetation(request, terrain.seed, terrain, surfaceHeight), indices,
     minHeight: minHeight - skirt, maxHeight,
   };
 }

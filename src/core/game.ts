@@ -8,6 +8,8 @@ import { FixedLoop } from './fixed-loop';
 import { Input } from './input';
 import { SurveyCamera } from './survey-camera';
 import { TerrainManager } from '../world/terrain-manager';
+import { VegetationManager } from '../world/vegetation-manager';
+import { BIOMES } from '../world/biomes';
 import { SkySystem } from '../world/sky';
 import { Interface } from '../ui/interface';
 import { normalizeSeed, randomSeed } from '../utils/random';
@@ -21,6 +23,7 @@ export class Game {
   private readonly context: RenderingContext;
   private readonly input: Input;
   private readonly terrain: TerrainManager;
+  private readonly vegetation: VegetationManager;
   private readonly rig: SurveyCamera;
   private readonly sky: SkySystem;
   private readonly ui: Interface;
@@ -37,18 +40,21 @@ export class Game {
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     this.context = context; this.seed = seed; this.quality = quality;
-    this.scene.name = 'Wayfarer / Phase 1';
+    this.scene.name = 'Wayfarer / Phase 2';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
     this.terrain = new TerrainManager(this.origin, seed, quality, (error) => this.fail(error));
+    this.vegetation = new VegetationManager(this.terrain, this.origin, quality);
+    if (new URLSearchParams(location.search).get('vegetation') === '0') this.vegetation.setEnabled(false);
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) this.vegetation.setWind(false);
     this.rig = new SurveyCamera(this.input, this.origin, this.terrain);
     this.rig.position.copy(position); this.rig.previous.copy(position);
     this.origin.update(position);
     this.sky = new SkySystem(context.renderer, this.scene, seed);
     this.sky.setHour(hour);
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
-    this.scene.add(this.terrain.group);
-    this.unsubscribeOrigin = this.origin.onChange((delta) => this.terrain.rebase(delta));
+    this.scene.add(this.terrain.group, this.vegetation.group);
+    this.unsubscribeOrigin = this.origin.onChange((delta) => { this.terrain.rebase(delta); this.vegetation.rebase(); });
     this.ui = new Interface(seed, hour, quality, context.backend, {
       seed: (value) => this.changeSeed(normalizeSeed(value)),
       randomSeed: () => this.changeSeed(randomSeed()),
@@ -59,15 +65,22 @@ export class Game {
       tour: () => { this.rig.touring = !this.rig.touring; this.ui.dismissIntro(); },
       reset: () => { this.rig.reset(); this.ui.dismissIntro(); },
       lock: () => { void this.input.lock(); },
-      debug: (value) => this.terrain.setDebug(value),
+      debug: (value) => { this.terrain.setDebug(value); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); },
       wireframe: (value) => this.terrain.setWireframe(value),
+      biomeDebug: (value) => { this.terrain.setBiomeDebug(value); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); },
+      vegetation: (value) => { this.vegetation.setEnabled(value); this.updateURL(); },
+      wind: (value) => this.vegetation.setWind(value),
+      detail: (value) => this.terrain.material.setDetail(value),
       stats: (value) => this.ui.showStats(value),
     });
     this.ui.syncTime(hour, this.sky.cycling);
+    this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled);
     this.input.onShortcut = (code) => {
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
       if (code === 'KeyH') this.ui.toggleHUD();
-      if (code === 'KeyL') this.terrain.setDebug(!this.terrain.debug);
+      if (code === 'KeyL') { this.terrain.setDebug(!this.terrain.debug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
+      if (code === 'KeyB') { this.terrain.setBiomeDebug(!this.terrain.biomeDebug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
+      if (code === 'KeyV') { this.vegetation.setEnabled(!this.vegetation.vegetationEnabled); this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled); this.updateURL(); }
       if (code === 'KeyT') { this.rig.touring = !this.rig.touring; this.ui.dismissIntro(); }
       if (code === 'KeyR') this.rig.reset();
       if (code === 'KeyP') { this.sky.cycling = !this.sky.cycling; this.ui.syncTime(this.sky.hour, this.sky.cycling); }
@@ -106,6 +119,7 @@ export class Game {
         if (this.ready) this.rig.fixedUpdate(dt);
       }, (alpha, dt) => {
         this.terrain.update(this.rig.position, dt);
+        this.vegetation.update(this.rig.position, dt);
         if (!this.ready) {
           this.loadTime += dt;
           // Spawn as soon as the local grid exists; keep loading distant roots behind the overlay.
@@ -138,6 +152,8 @@ export class Game {
         this.context.renderer.info.reset();
         this.context.renderer.render(this.scene, this.rig.camera);
         const stats = this.terrain.stats;
+        const vegetation = this.vegetation.stats;
+        const biome = BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)] ?? BIOMES[0];
         const lod = Array(6).fill(0) as number[];
         for (const mesh of this.terrain.group.children) {
           if (mesh.visible) {
@@ -147,12 +163,13 @@ export class Game {
         }
         this.ui.update({
           x: this.rig.position.x, y: this.rig.position.y, z: this.rig.position.z,
-          heading: this.rig.heading, time: this.sky.timeLabel, biome: 'Alpine highlands',
+          heading: this.rig.heading, time: this.sky.timeLabel, biome: biome.name,
           fps: this.loop.fps, calls: this.context.renderer.info.render.drawCalls,
           triangles: this.context.renderer.info.render.triangles,
           geometries: this.context.renderer.info.memory.geometries,
           cached: stats.cached, pending: stats.pending, shifts: this.origin.shifts,
           backend: this.context.backend, touring: this.rig.touring, speed: this.rig.velocity.length(), lod,
+          vegetation: vegetation.instances, vegetationBatches: vegetation.batches, vegetationCapacity: vegetation.capacity,
           progress: this.terrain.wanted ? this.terrain.ready / this.terrain.wanted : 0,
         }, timestamp);
       });
@@ -171,6 +188,7 @@ export class Game {
     this.seed = seed;
     this.origin.reset();
     this.terrain.reset(seed, this.quality);
+    this.vegetation.reset();
     this.sky.reseed(seed);
     this.rig.reset();
     this.ui.setSeed(seed);
@@ -182,6 +200,7 @@ export class Game {
     this.beginLoading();
     this.quality = quality;
     this.terrain.reset(this.seed, quality);
+    this.vegetation.setQuality(quality);
     this.sky.setQuality(quality);
     resizeRenderer(this.context, quality);
     const fog = this.scene.fog as Fog;
@@ -197,6 +216,7 @@ export class Game {
     url.searchParams.set('z', this.rig.position.z.toFixed(1));
     url.searchParams.set('hour', this.sky.hour.toFixed(2));
     url.searchParams.set('quality', this.quality);
+    url.searchParams.set('vegetation', this.vegetation.vegetationEnabled ? '1' : '0');
     history.replaceState(null, '', url);
   }
 
@@ -231,6 +251,10 @@ export class Game {
     return { ready: this.ready, seed: this.seed, backend: this.context.backend,
       position: this.rig.position.toArray(), origin: this.origin.absolute.toArray(),
       shifts: this.origin.shifts, hour: this.sky.hour, ...this.terrain.stats,
+      quality: this.quality, biome: BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)]!.name,
+      biomeDebug: this.terrain.biomeDebug, vegetationEnabled: this.vegetation.vegetationEnabled,
+      windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, vegetation: this.vegetation.stats,
+      touring: this.rig.touring, speed: this.rig.velocity.length(),
       fps: this.loop.fps, drawCalls: this.context.renderer.info.render.drawCalls,
       gpuBytes: this.context.renderer.info.memory.total };
   }
@@ -240,7 +264,7 @@ export class Game {
     this.disposed = true;
     this.abort.abort(); this.unsubscribeOrigin();
     void this.context.renderer.setAnimationLoop(null);
-    this.input.dispose(); this.ui.dispose(); this.terrain.dispose(); this.sky.dispose();
+    this.input.dispose(); this.ui.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.sky.dispose();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }
 }

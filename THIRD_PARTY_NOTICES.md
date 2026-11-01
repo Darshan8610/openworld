@@ -18,4 +18,4 @@
 
 ## Procedural content
 
-Terrain, sky parameters, stars, moon shading, terrain albedo, and UI geometry are generated in code. No paid or externally downloaded art assets are used.
+Terrain, sky parameters, stars, moon shading, biome climate fields, terrain albedo, seamless surface textures, vegetation geometry/placement, and UI geometry are generated in code. No paid or externally downloaded art assets are used.

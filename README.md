@@ -1,8 +1,8 @@
 # Wayfarer — Infinite Open-World Driving Game
 
-**Phase 1: world foundation.** A seeded, infinite, chunk-streamed alpine terrain renderer with a dynamic day/night sky, floating origin, and a free-flight survey camera. Built with Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, and Web Workers.
+**Phase 2: biomes & living terrain.** A seeded, infinite, chunk-streamed landscape with five climate-blended biomes, procedural triplanar surface detail, and deterministic instanced vegetation. Built on the Phase 1 world foundation: Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers, floating origin, dynamic day/night sky, and a free-flight survey camera.
 
-> This is the foundation for the driving game, not the final driving experience. Roads, biomes, vegetation, vehicle physics, weather, audio, and full menus arrive in later phases.
+> This is still the world foundation for the driving game, not the final driving experience. Roads, vehicles, traffic, missions, physics, weather, audio, and full menus arrive in later phases.
 
 ## Quick start
 
@@ -14,10 +14,10 @@ npm run dev
 Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires HTTPS or localhost; the app automatically falls back to WebGL2 when WebGPU is unavailable or fails a probe draw.
 
 ```bash
-npm run build      # type-check + production build
-npm run preview    # serve the production build
-npm test           # unit tests (noise, streaming, origin, mesh generation)
-npm run test:browser  # Playwright browser tests (requires a Chromium install)
+npm run build         # type-check + production build
+npm run preview       # serve the production build
+npm test              # unit tests (noise, streaming, origin, terrain, biomes, vegetation)
+npm run test:browser  # Playwright browser tests (requires Chromium)
 ```
 
 For browser tests, install Chromium once:
@@ -39,45 +39,58 @@ npx playwright install chromium
 | T | Toggle scenic auto-flight |
 | R | Reset viewpoint |
 | P | Pause/resume day cycle |
+| V | Toggle vegetation |
+| B | Toggle biome overlay |
 | L | Toggle LOD debug colors |
 | H | Hide/show HUD |
 | F3 | Performance overlay |
 
-The settings panel (top-right) exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset, LOD/wireframe toggles, and a shareable world link.
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset, vegetation, wind, surface detail, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1` alongside seed, position, hour, quality, and renderer.
 
-## What Phase 1 includes
+## What Phase 2 adds
+
+- **Biomes:** valley meadows, conifer highlands, golden steppe, alpine tundra, and snowline peaks. Seeded temperature/moisture fields blend continuously with altitude and slope; rock and snow masks expose cliffs and summits. The HUD names the live biome, and `B` shows a climate overlay.
+- **Surface detail:** three seamless procedural textures (grass, rock, snow) are triplanar-projected in world space, blended by biome/slope/snow, and faded with distance. Texture periods divide the floating-origin wrap so rebasing does not slide the ground pattern.
+- **Vegetation:** pine, aspen, shrub, grass, and rock are placed in canonical world cells by workers, grounded on the actual terrain mesh, and packed into five global instanced batches. Quality presets bound density, range, and capacity; coarse LODs keep a stable subset of the same plants. A height-weighted wind shader animates foliage, and range edges fade/scale instead of popping.
+- **Lifecycle:** vegetation rebuilds on terrain revision, camera movement, origin shift, or settings change; all geometries, materials, instance buffers, and textures are disposed on teardown. `prefers-reduced-motion` starts with wind disabled.
+
+## What Phase 1 still provides
 
 - **Renderer:** `WebGPURenderer` with AgX tone mapping, MSAA, PBR terrain material, sky-derived environment lighting, directional sun/moon, hemisphere fill, and a WebGL2 fallback path with a probe draw and runtime device-loss fallback.
-- **Sky:** Three.js `SkyMesh` analytic Rayleigh/Mie atmosphere, procedural layered clouds, seeded star sphere with a galactic band, procedural moon, and a 12-minute day/night cycle.
+- **Sky:** analytic Rayleigh/Mie atmosphere, procedural layered clouds, seeded star sphere with a galactic band, procedural moon, and a 12-minute day/night cycle.
 - **Terrain:** deterministic seeded simplex fBm + ridged multifractal + domain warping + valley carving, streamed as a quadtree of chunks around the camera. Six LOD levels, exact shared borders, vertical skirts, frustum culling, bounded LRU cache, and transferable worker-generated buffers.
 - **Floating origin:** simulation coordinates stay in JS doubles; GPU coordinates are re-centered every 2048 m so precision does not degrade at large distances.
 - **Survey camera:** fixed 120 Hz update with render interpolation, terrain clearance, scenic auto-flight, and manual free flight.
-- **UI shell:** loading progress, minimal HUD, settings panel, seed input, time control, graphics presets, LOD/wireframe debug, performance overlay, and URL sharing.
+- **UI shell:** loading progress, minimal HUD, settings panel, seed input, time control, graphics presets, debug toggles, performance overlay, and URL sharing.
 
 ## Architecture
 
 ```text
 src/
-  config.ts               central tuning
+  config.ts               central tuning + vegetation quality budgets
   main.ts                 bootstrap
   core/                   game loop, fixed clock, input, floating origin, survey camera
-  world/                  noise, terrain field, quadtree tiles, worker pool, generator, sky
-  rendering/              renderer factory, terrain material
+  world/                  noise, terrain field, biomes, quadtree tiles, worker pool,
+                          generator, vegetation field/manager, sky
+  rendering/              renderer factory, terrain material, surface textures,
+                          vegetation geometry
   ui/                     HUD/settings shell and styles
   workers/                terrain worker entry
   utils/                  seeded RNG and math
 tests/                    unit + browser regression tests
 ```
 
-See [docs/PHASE1.md](docs/PHASE1.md) for the technical walkthrough, tuning guide, and known limitations.
+See [docs/PHASE1.md](docs/PHASE1.md) for the original world foundation and [docs/PHASE2.md](docs/PHASE2.md) for biomes, surfaces, vegetation, quality budgets, and validation notes.
 
 ## Performance notes
 
-- Terrain generation runs in 2–4 Web Workers depending on preset; the main thread only uploads finished buffers.
+- Terrain and vegetation placement run in 2–4 Web Workers depending on preset; the main thread only uploads finished buffers and packs instances.
 - Pixel ratio is capped per preset and by a total-pixel budget to protect 4K/retina displays.
-- Chunk geometry, materials, and textures are disposed on eviction, seed change, and quality change.
-- The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, and LOD distribution.
+- Vegetation uses five instanced draw batches with fixed capacities. Low/Balanced/High budgets are documented in [docs/PHASE2.md](docs/PHASE2.md); budget truncation is reported in debug stats.
+- Chunk geometry, materials, instance buffers, and textures are disposed on eviction, seed change, quality change, and teardown.
+- The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, and instanced batch count.
+- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there.
 
 ## Assets and licenses
 
-No paid assets. Terrain, sky, stars, moon, and materials are procedural. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+No paid assets. Terrain, sky, stars, moon, biomes, surface textures, vegetation, and materials are procedural. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

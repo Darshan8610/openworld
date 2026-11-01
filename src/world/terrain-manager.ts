@@ -9,11 +9,13 @@ import type { TileCoord, TileResult } from './tiles';
 import type { FloatingOrigin } from '../core/floating-origin';
 import { clamp } from '../utils/math';
 
-interface Tile {
+export interface TerrainTile {
   coord: TileCoord;
   mesh: Mesh;
   surface: MeshStandardNodeMaterial;
   diagnostic: MeshBasicNodeMaterial;
+  biomeMaterial: MeshBasicNodeMaterial;
+  vegetation: Float32Array;
   segments: number;
   used: number;
   bounds: Box3;
@@ -28,14 +30,16 @@ export class TerrainManager {
   readonly group = new Group();
   readonly material = createTerrainMaterial();
   private pool: TerrainPool;
-  private readonly cache = new Map<string, Tile>();
-  private readonly visible = new Map<string, Tile>();
+  private readonly cache = new Map<string, TerrainTile>();
+  private readonly visible = new Map<string, TerrainTile>();
   private readonly roots = new Map<string, RootGeneration>();
   private readonly inflight = new Set<string>();
   private epoch = 0;
   private elapsed: number = CONFIG.terrain.updateInterval;
   private frame = 0;
   private debugEnabled = false;
+  private debugMode: 'off' | 'lod' | 'biome' = 'off';
+  revision = 0;
   private disposed = false;
   wanted = 0;
   ready = 0;
@@ -52,11 +56,12 @@ export class TerrainManager {
     this.pool = new TerrainPool(QUALITY[quality].workers, onError);
   }
 
-  private createTile(result: TileResult): Tile {
+  private createTile(result: TileResult): TerrainTile {
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new BufferAttribute(result.positions, 3));
     geometry.setAttribute('normal', new BufferAttribute(result.normals, 3));
     geometry.setAttribute('color', new BufferAttribute(result.colors, 3));
+    geometry.setAttribute('surface', new BufferAttribute(result.surface, 3));
     geometry.setIndex(new BufferAttribute(result.indices, 1));
     const size = tileSize(result.coord.level);
     const center = new Vector3(
@@ -70,12 +75,13 @@ export class TerrainManager {
     geometry.boundingSphere = new Sphere(new Vector3(0, midY, 0), half.length());
     const surface = this.material.createTileMaterial(result.coord.level, false);
     const diagnostic = this.material.createTileMaterial(result.coord.level, true);
-    const mesh = new Mesh(geometry, this.debugEnabled ? diagnostic : surface);
+    const biomeMaterial = this.material.createTileMaterial(result.coord.level, 'biome');
+    const mesh = new Mesh(geometry, this.debugMode === 'biome' ? biomeMaterial : this.debugEnabled ? diagnostic : surface);
     mesh.name = `terrain ${result.key}`;
     mesh.position.copy(center);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    return { coord: result.coord, mesh, surface, diagnostic, segments: result.segments, used: this.frame, bounds: new Box3() };
+    return { coord: result.coord, mesh, surface, diagnostic, biomeMaterial, vegetation: result.vegetation, segments: result.segments, used: this.frame, bounds: new Box3() };
   }
 
   update(position: Vector3, dt: number): void {
@@ -162,6 +168,7 @@ export class TerrainManager {
         this.group.add(tile.mesh);
       }
       generation.complete = true;
+      this.revision++;
     }
     // Retire roots well outside the new window; fog conceals the outer boundary.
     for (const [key, tile] of this.visible) {
@@ -175,10 +182,14 @@ export class TerrainManager {
   private readonly lastPosition = new Vector3();
 
 
+  /** Visible source records for the vegetation packer; ownership stays here. */
+  get activeTiles(): IterableIterator<TerrainTile> { return this.visible.values(); }
+
   private removeVisible(key: string): void {
     const tile = this.visible.get(key);
     if (tile) this.group.remove(tile.mesh);
     this.visible.delete(key);
+    this.revision++;
   }
 
   private evict(): void {
@@ -194,9 +205,9 @@ export class TerrainManager {
     }
   }
 
-  /** O(1) lookup in the finest available loaded grid; no noise evaluation on RAF. */
+  /** Finest visible tile lookup; bounded by the streaming window, no noise on RAF. */
   heightAt(x: number, z: number): number | undefined {
-    let best: Tile | undefined;
+    let best: TerrainTile | undefined;
     for (const tile of this.visible.values()) {
       const size = tileSize(tile.coord.level);
       if (x >= tile.coord.x * size && x <= (tile.coord.x + 1) * size && z >= tile.coord.z * size && z <= (tile.coord.z + 1) * size) {
@@ -214,16 +225,42 @@ export class TerrainManager {
       : h(ix + 1, iz + 1) + (h(ix, iz + 1) - h(ix + 1, iz + 1)) * (1 - u) + (h(ix + 1, iz) - h(ix + 1, iz + 1)) * (1 - v);
   }
 
+  /** HUD lookup from uploaded worker data; no climate noise on the main thread. */
+  biomeAt(x: number, z: number): number {
+    let best: TerrainTile | undefined;
+    for (const tile of this.visible.values()) {
+      const size = tileSize(tile.coord.level);
+      if (x >= tile.coord.x * size && x <= (tile.coord.x + 1) * size && z >= tile.coord.z * size && z <= (tile.coord.z + 1) * size) {
+        if (!best || tile.coord.level > best.coord.level) best = tile;
+      }
+    }
+    if (!best) return 0;
+    const n = best.segments, size = tileSize(best.coord.level);
+    const ix = Math.round(clamp((x / size - best.coord.x) * n, 0, n));
+    const iz = Math.round(clamp((z / size - best.coord.z) * n, 0, n));
+    return best.mesh.geometry.getAttribute('surface').array[(iz * (n + 1) + ix) * 3 + 2]!;
+  }
+
   rebase(delta: Vector3): void { for (const tile of this.cache.values()) tile.mesh.position.sub(delta); }
 
   setDebug(enabled: boolean): void {
     this.debugEnabled = enabled;
-    for (const tile of this.cache.values()) tile.mesh.material = enabled ? tile.diagnostic : tile.surface;
+    this.debugMode = enabled ? 'lod' : 'off';
+    this.applyMaterial();
+  }
+  setBiomeDebug(enabled: boolean): void {
+    this.debugMode = enabled ? 'biome' : 'off';
+    this.debugEnabled = false;
+    this.applyMaterial();
+  }
+  get biomeDebug(): boolean { return this.debugMode === 'biome'; }
+  private applyMaterial(): void {
+    for (const tile of this.cache.values()) tile.mesh.material = this.debugMode === 'biome' ? tile.biomeMaterial : this.debugEnabled ? tile.diagnostic : tile.surface;
   }
   get debug(): boolean { return this.debugEnabled; }
   setWireframe(enabled: boolean): void {
     this.material.setWireframe(enabled);
-    for (const tile of this.cache.values()) { tile.surface.wireframe = enabled; tile.diagnostic.wireframe = enabled; }
+    for (const tile of this.cache.values()) { tile.surface.wireframe = enabled; tile.diagnostic.wireframe = enabled; tile.biomeMaterial.wireframe = enabled; }
   }
 
   reset(seed: string, quality: QualityName): void {
@@ -239,6 +276,7 @@ export class TerrainManager {
     this.cache.clear(); this.visible.clear(); this.roots.clear();
     this.wanted = 0; this.ready = 0; this.elapsed = CONFIG.terrain.updateInterval;
     this.lastError = undefined;
+    this.revision++;
   }
 
   get stats() {
@@ -252,9 +290,10 @@ export class TerrainManager {
     this.pool.dispose();
     for (const tile of this.cache.values()) { this.group.remove(tile.mesh); this.disposeTile(tile); }
     this.cache.clear(); this.visible.clear(); this.roots.clear();
+    this.material.dispose();
   }
 
-  private disposeTile(tile: Tile): void {
-    tile.mesh.geometry.dispose(); tile.surface.dispose(); tile.diagnostic.dispose();
+  private disposeTile(tile: TerrainTile): void {
+    tile.mesh.geometry.dispose(); tile.surface.dispose(); tile.diagnostic.dispose(); tile.biomeMaterial.dispose();
   }
 }
