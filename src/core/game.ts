@@ -377,7 +377,8 @@ export class Game {
       if (code === 'KeyR') { if (this.mode === 'character') this.respawnPlayer(); else this.rig.reset(); }
 
       if (code === 'KeyJ') { this.water.setEnabled(!this.water.isEnabled); this.ui.syncWater(this.water.isEnabled, this.weather.overridden); }
-      if (code === 'KeyN') {
+      // Weather pinning lives on M; N stays with the Phase 8 population toggle.
+      if (code === 'KeyM') {
         const kinds: (WeatherKind | null)[] = [null, 'clear', 'cloudy', 'rain', 'storm', 'fog', 'snow', 'blizzard'];
         const next = kinds[(kinds.indexOf(this.weather.overridden) + 1) % kinds.length] ?? null;
         this.weather.setOverride(next);
@@ -504,6 +505,8 @@ export class Game {
     try {
       this.loop.tick(timestamp, (dt) => {
         if (!this.ready || this.discoveryPanel.isOpen) return;
+        // Weather and the water surface are advanced on the fixed clock: buoyancy,
+        // swimming and the wave phase must never depend on the render rate.
         this.stepEnvironment(dt);
         if (this.driving) {
           // Control handover: the character is parked while driving, and the
@@ -522,7 +525,6 @@ export class Game {
         this.cameraWorld.copy(this.activeCamera.position).add(this.origin.absolute);
         this.world.update(dt, focus, this.cameraWorld, this.simTime);
         this.presentEnvironment(dt);
-
         this.buildings.update(focus, dt, this.sky.hour);
         this.buildingExperience.update(timestamp);
         if (this.ready && this.ui.overlay === 'none' && this.mode === 'character') this.discovery.visit(focus);
@@ -849,6 +851,7 @@ export class Game {
     this.vehicles = new VehicleSystem({ seed, queries: this.queries, events: this.events, interaction: this.interaction,
       water: vehicleWaterProvider(waterField, () => this.simTime),
       ...(vehicleSave.status === 'ok' ? { savedState: vehicleSave.save.vehicles } : {}) });
+    this.attachWaterForces();
   }
 
   // ---- Vehicles --------------------------------------------------------------
@@ -962,6 +965,7 @@ export class Game {
     this.buildGameplayLayer(seed);
     this.scene.add(this.objects.group, this.npcs.group, this.vehicles.root);
     this.scene.add(this.water.group, this.particles.group);
+    // Swimming must follow the new world's hydrology, not the previous field.
     this.character.setWater(this.water.swimQuery);
     this.world.setWater(this.water); this.world.setBuoyancy(this.buoyancy);
     this.ui.syncObjects(this.objects.objectsEnabled);

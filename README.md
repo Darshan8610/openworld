@@ -1,6 +1,6 @@
 # Wayfarer — Infinite Open-World Game
 
-**Phases 1–12 combined (Phase 11 milestone 11.1): a seeded, infinite world you can walk, hear, inspect, touch and share with other people.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, synthesised spatial audio with ambience zones, a title/pause menu shell with a real mix and accessibility options, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
+**Phases 1–12 combined (Phase 11 milestone 11.1): a seeded, infinite world you can walk, swim, drive, fly, sail, hear, inspect, touch and share with other people.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, carved lakes and rivers with a shared wave surface, buoyancy, swimming, a seeded weather front with pooled particles, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, 26 land/air/water vehicles, synthesised spatial audio with ambience zones, a title/pause menu shell with a real mix and accessibility options, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
 
 Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers and Rapier 3D.
 
@@ -18,7 +18,7 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 481 unit/integration tests across 46 files
+npm test              # unit/integration tests across the full phase suite
 npm run test:browser  # Playwright browser suite (requires Chromium)
 ```
 
@@ -90,13 +90,13 @@ npx playwright install chromium
 | K | Physics collider wireframes (developer) |
 | X | Drop a physics test crate (developer, while using the Rapier sandbox) |
 | J | Toggle the water surface |
-| N | Cycle the weather override (auto → clear → cloudy → rain → storm → fog → snow → blizzard) |
+| M | Cycle the weather override (auto → clear → cloudy → rain → storm → fog → snow → blizzard) |
 
 The title screen exposes the world seed (with a random-seed button), the graphics preset and a shareable link before you commit to a walk. The pause menu (`Esc`) freezes the simulation and the audio and offers resume, settings, copy link, mute, restart and back-to-title, plus a controls list.
 
-The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, a shareable world link, a four-bus sound mix (master / ambience / world & footsteps / interface, mute, sound captions) and accessibility controls (reduce motion, high contrast, larger interface text, hold-to-confirm). Preferences persist locally under `wayfarer.preferences` and apply immediately.
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, people (NPC population), water surfaces with a live status line, weather selection (auto + eleven conditions), wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, a shareable world link, a four-bus sound mix (master / ambience / world & footsteps / interface, mute, sound captions) and accessibility controls (reduce motion, high contrast, larger interface text, hold-to-confirm). Preferences persist locally under `wayfarer.preferences` and apply immediately.
 
-Share URLs include `seed`, player position, `hour`, `quality`, `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `npcs=0|1`, `postfx=0|1`, `physics=0`, `route=cedar|golden|snowline` and an optional `character=<glb-url>`.
+Share URLs include `seed`, player position, `hour`, `quality`, `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `npcs=0|1`, `water=0|1`, `weather=auto|clear|partly-cloudy|cloudy|overcast|rain|heavy-rain|storm|fog|snow|blizzard|windy`, `postfx=0|1`, `physics=0`, `route=cedar|golden|snowline` and an optional `character=<glb-url>`.
 
 ## What Phase 12 adds
 
@@ -130,6 +130,17 @@ See [docs/PHASE8.md](docs/PHASE8.md) for the placement model, navigation and per
 - **Persistence and floating origin:** a vehicle you drive somewhere and leave is still there when you come back, across world rebasing and across sessions, stored as a diff from the deterministic baseline in its own versioned slice.
 
 See [docs/PHASE10.md](docs/PHASE10.md) for the vehicle architecture, why vehicles run their own integrator rather than Rapier, the per-class force models, and the fourteen physics defects the test suite caught.
+
+## What Phase 9 adds
+
+- **Real water bodies:** seeded lakes, ponds, reservoirs, wetlands, seas and downhill rivers carved into the same deterministic terrain — one water field answers "is there water here, how deep, which way does it flow" for terrain generation, queries, rendering, physics and placement alike.
+- **A shared wave surface:** the drawn surface evaluates the same three wave trains the physics reads, with depth fading, shoreline foam, fresnel sky mixing, sun glitter, rain pockmarks and an underwater fog response. TSL node material, so WebGPU and WebGL2 run the same graph.
+- **Buoyancy on the fixed step:** props and Rapier bodies float, sink, drag and drift with currents inside the physics substep loops, and survive floating-origin rebases; entering the water reports a splash.
+- **Swimming and diving:** the character swims to neutral buoyancy, is pushed by river currents, and cannot dive through the lake bed.
+- **Weather:** eleven conditions from a seeded advecting front, eased over tens of seconds, driving sun, ambient, clouds, fog, wind, sea state, ground wetness, snow cover and grip; rain turns to snow with altitude and temperature.
+- **Bounded particles:** one pooled system with rain, snow, splash and spray layers, per-particle ground/water collision, and a hard per-preset budget.
+
+See [docs/PHASE9.md](docs/PHASE9.md) for the hydrology model, contracts, measurements and known gaps.
 
 ## What Phase 6 adds
 
@@ -251,7 +262,7 @@ The phase lines were developed against the same Phase 3 base, so this branch rec
 - Chunk geometry, materials, instance buffers, textures and object geometry caches are disposed on eviction, seed change, quality change, and teardown.
 - Audio is hard-capped at 24 voices (per-bus 4/16/6) with a single shared 2-second generated noise buffer; ambience decisions run at 4 Hz, footsteps are distance-driven, and a paused game suspends the audio context entirely.
 - The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, instanced batch count, physics bodies/colliders/step time, streamed ground colliders, entity simulation levels, object counts, prop bodies, the interaction target, and audio state/voices/capacity/drops/zone/steps.
-- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The combined branch passes the production build and 481 unit/integration tests. Selected WebGL2 browser checks passed; the full browser suite and hardware WebGPU were not validated. See [integration notes](docs/INTEGRATION.md).
+- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The combined branch passes the production build and its full unit/integration suite. Selected WebGL2 browser checks passed; the full browser suite and hardware WebGPU were not validated. See [integration notes](docs/INTEGRATION.md).
 
 ## Assets and licenses
 

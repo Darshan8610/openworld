@@ -8,13 +8,15 @@
 | Phase 7 buildings/interiors | `arena/b5edc35b-car-game` at `329637d` |
 | Phases 8 and 12 NPCs/audio/menus | `arena/5bd47b5d-car-game` at `3e4d294` |
 | Phase 10 vehicles | `arena/2d03ff06-car-game` at `573ad86` |
-| Phase 9 water/environment | `arena/298dcffe-car-game` at `3e6e5be` |
 | Phase 11 milestone 11.1 | current integration branch, commit `ff37948` |
+| Phase 9 water & environment | `arena/298dcffe-car-game` at `3e6e5be` |
 
 The feature lines were merged with ancestry retained, not copied as disconnected
 folders. Phase 9 was excluded in the first integration (PR #2); the refreshed
-integration includes it. Phase 12's remote head remains `3e4d294` and was already
-an ancestor of `main2`; no newer Phase 12 source branch was found in the refresh.
+integration includes it from `arena/298dcffe-car-game`. Hydrology carving shares
+the terrain field with road grading and building placement, buoyancy runs inside
+the existing Rapier and prop substep loops, and the weather front drives the sky
+and particles alongside the Phase 12 audio/UI systems.
 
 ## Shared composition and conflict resolution
 
@@ -36,6 +38,8 @@ an ancestor of `main2`; no newer Phase 12 source branch was found in the refresh
   NPC/vehicle/building per-seed stores remain intact.
 - NPC/audio and vehicle lifecycle paths were retained together instead of selecting
   one side of overlapping merge blocks. Phase 9 is now integrated with those paths.
+- Phase 9 key collision: the NPC toggle keeps `N`; weather cycling lives on `M`,
+  and both bindings are documented in the pause controls.
 
 ## Known boundaries
 
@@ -53,7 +57,7 @@ merely because their respective source phases are present in the same tree.
 ## Verification in this integration session
 
 - TypeScript + production bundling: `npm run build` passed.
-- Unit/integration suite: 434 tests passed across 38 files.
+- Unit/integration suite: 478 tests passed across 45 files (Phase 9 water/weather/particles/buoyancy suites included).
 - Selected Playwright software-WebGL2 checks passed:
   - deterministic streamed-world character boot without page errors;
   - discovery chart, waypoint and manual save/load roundtrip;

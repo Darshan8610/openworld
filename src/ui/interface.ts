@@ -131,6 +131,7 @@ export function pauseMarkup(): string {
               <li><kbd>E</kbd> interact / talk · <kbd>1</kbd>–<kbd>4</kbd> reply</li>
               <li><kbd>C</kbd> survey camera · <kbd>F</kbd> first person</li>
               <li><kbd>N</kbd> people · <kbd>O</kbd> objects · <kbd>V</kbd> vegetation</li>
+              <li><kbd>J</kbd> water · <kbd>M</kbd> weather · <kbd>Q</kbd> vehicle</li>
               <li><kbd>F3</kbd> performance · <kbd>Esc</kbd> pause</li>
             </ul>
           </div>
