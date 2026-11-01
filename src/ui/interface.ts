@@ -19,6 +19,7 @@ export interface UIActions {
   vegetation: (enabled: boolean) => void;
   wind: (enabled: boolean) => void;
   detail: (enabled: boolean) => void;
+  postfx: (enabled: boolean) => void;
   viewpoint: (biome: BiomeId) => void;
   stats: (enabled: boolean) => void;
 }
@@ -64,6 +65,7 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <label class="switch-row" for="vegetation"><span>Vegetation <kbd>V</kbd><small>Trees, sage, grass & weathered stone</small></span><input type="checkbox" id="vegetation" checked role="switch"></label>
           <label class="switch-row" for="wind"><span>Wind in the canopy<small>Procedural, height-weighted motion</small></span><input type="checkbox" id="wind" checked role="switch"></label>
           <label class="switch-row" for="detail"><span>Terrain surface detail<small>Triplanar grass, rock & snow</small></span><input type="checkbox" id="detail" checked role="switch"></label>
+          <label class="switch-row" for="postfx"><span>Cinematic post<small>Bloom, FXAA & vignette (off on Low)</small></span><input type="checkbox" id="postfx" checked role="switch"></label>
           <label class="switch-row" for="biome-debug"><span>Biome map <kbd>B</kbd><small>Inspect the climate regions</small></span><input type="checkbox" id="biome-debug" role="switch"></label>
           <label class="switch-row" for="lod"><span>Show terrain LOD<small>Color by geometry detail</small></span><input type="checkbox" id="lod" role="switch"></label>
           <label class="switch-row" for="wireframe"><span>Wireframe</span><input type="checkbox" id="wireframe" role="switch"></label>
@@ -102,6 +104,7 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     on('lod', 'change', () => actions.debug($<HTMLInputElement>('#lod').checked));
     on('wireframe', 'change', () => actions.wireframe($<HTMLInputElement>('#wireframe').checked));
     on('biome-debug', 'change', () => actions.biomeDebug($<HTMLInputElement>('#biome-debug').checked));
+    on('postfx', 'change', () => actions.postfx($<HTMLInputElement>('#postfx').checked));
     on('vegetation', 'change', () => actions.vegetation($<HTMLInputElement>('#vegetation').checked));
     on('biome-view', 'change', () => { const value = $<HTMLSelectElement>('#biome-view').value; if (value !== '') { actions.viewpoint(Number(value) as BiomeId); $<HTMLSelectElement>('#biome-view').value = ''; } });
     on('wind', 'change', () => actions.wind($<HTMLInputElement>('#wind').checked));
@@ -118,6 +121,7 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     $<HTMLInputElement>('#biome-debug').checked = biome;
     $('#biome-legend').hidden = !biome;
   }
+  syncPost(enabled: boolean): void { $<HTMLInputElement>('#postfx').checked = enabled; }
   syncNature(vegetation: boolean, wind: boolean): void {
     $<HTMLInputElement>('#vegetation').checked = vegetation;
     $<HTMLInputElement>('#wind').checked = wind;

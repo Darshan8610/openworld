@@ -24,11 +24,11 @@ export function cellRandom(x: number, z: number, seed: number, salt: number): nu
 }
 
 const RULES = [
-  { spacing: 16, minLevel: 3, salt: 0x714a, maximum: 0.67 },
-  { spacing: 20, minLevel: 3, salt: 0x2b91, maximum: 0.28 },
-  { spacing: 9, minLevel: 4, salt: 0x61c7, maximum: 0.47 },
-  { spacing: 3.2, minLevel: 5, salt: 0x3a19, maximum: 0.76 },
-  { spacing: 22, minLevel: 3, salt: 0x5d23, maximum: 0.74 },
+  { spacing: 14, minLevel: 3, salt: 0x714a, maximum: 0.82 },
+  { spacing: 17, minLevel: 3, salt: 0x2b91, maximum: 0.38 },
+  { spacing: 7, minLevel: 4, salt: 0x61c7, maximum: 0.58 },
+  { spacing: 2.4, minLevel: 5, salt: 0x3a19, maximum: 0.9 },
+  { spacing: 20, minLevel: 3, salt: 0x5d23, maximum: 0.78 },
 ] as const;
 
 /**
@@ -61,17 +61,21 @@ export function generateVegetation(coord: TileCoord, seed: string, field: Terrai
       field.biomes.sample(x, z, y, slope, climate);
       const w = climate.weights;
       const stable = 1 - smoothstep(0.25, 0.52, slope);
+      // Seeded grove / meadow clustering: dense stands alternate with open ground
+      // instead of a uniform Poisson scatter that reads as sparse dots.
+      const grove = smoothstep(-0.18, 0.5, field.cover.fbm(x * 0.0035, z * 0.0035, 2));
+      const meadow = smoothstep(-0.3, 0.55, field.cover.fbm(x * 0.006 + 40, z * 0.006 - 19, 2));
       let probability = 0;
-      if (kind === 0) probability = (w[1] * 0.61 + w[0] * 0.035 + w[3] * 0.025) * stable * (1 - climate.snow);
-      if (kind === 1) probability = (w[0] * 0.19 + w[1] * 0.09) * stable * (1 - smoothstep(550, 850, y));
-      if (kind === 2) probability = (w[2] * 0.47 + w[0] * 0.24 + w[3] * 0.16 + w[1] * 0.12) * stable * (1 - climate.snow);
-      if (kind === 3) probability = (w[0] * 0.76 + w[2] * 0.43 + w[1] * 0.34 + w[3] * 0.12) * stable * (1 - climate.snow);
-      if (kind === 4) probability = (0.08 + climate.rock * 0.36 + w[3] * 0.2 + climate.snow * 0.1) * (1 - smoothstep(0.65, 0.88, slope));
+      if (kind === 0) probability = (w[1] * 0.78 + w[0] * 0.05 + w[3] * 0.03) * stable * (1 - climate.snow) * (0.2 + grove * 1.6);
+      if (kind === 1) probability = (w[0] * 0.30 + w[1] * 0.14) * stable * (1 - smoothstep(550, 850, y)) * (0.3 + grove * 1.3);
+      if (kind === 2) probability = (w[2] * 0.55 + w[0] * 0.30 + w[3] * 0.18 + w[1] * 0.16) * stable * (1 - climate.snow) * (0.4 + meadow * 1.1);
+      if (kind === 3) probability = (w[0] * 0.92 + w[2] * 0.56 + w[1] * 0.48 + w[3] * 0.16) * stable * (1 - climate.snow) * (0.45 + meadow * 1.05);
+      if (kind === 4) probability = (0.09 + climate.rock * 0.4 + w[3] * 0.22 + climate.snow * 0.1) * (1 - smoothstep(0.65, 0.88, slope));
       if (random > probability) continue;
       const r1 = cellRandom(canonicalX, canonicalZ, seedHash, rule.salt + 3);
       const r2 = cellRandom(canonicalX, canonicalZ, seedHash, rule.salt + 4);
-      const scale = kind === 0 ? 0.7 + r1 * 0.8 : kind === 1 ? 0.7 + r1 * 0.6 : kind === 4 ? 0.5 + r1 * 1.6 : 0.65 + r1 * 0.8;
-      records.push(x - left, y - 0.12, z - top, scale, r2 * Math.PI * 2, kind, 0.8 + r1 * 0.35, random);
+      const scale = kind === 0 ? 0.8 + r1 * 1.0 : kind === 1 ? 0.75 + r1 * 0.7 : kind === 4 ? 0.5 + r1 * 1.8 : kind === 3 ? 0.8 + r1 * 0.9 : 0.7 + r1 * 0.9;
+      records.push(x - left, y - 0.12, z - top, scale, r2 * Math.PI * 2, kind, 0.75 + r1 * 0.45, random);
     }
   }
   return new Float32Array(records);

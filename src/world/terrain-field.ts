@@ -12,6 +12,8 @@ export class TerrainField {
   private readonly warp: SimplexNoise;
   private readonly relief: SimplexNoise;
   private readonly detail: SimplexNoise;
+  /** Low-frequency canopy / ground-cover clustering, independent of climate. */
+  readonly cover: SimplexNoise;
   readonly biomes: BiomeField;
 
   constructor(public readonly seed: string) {
@@ -19,6 +21,7 @@ export class TerrainField {
     this.warp = new SimplexNoise(hash ^ 0x1234567);
     this.relief = new SimplexNoise(hash ^ 0x7f4a7c15);
     this.detail = new SimplexNoise(hash ^ 0x6a09e667);
+    this.cover = new SimplexNoise(hash ^ 0x1b873593);
     this.biomes = new BiomeField(seed);
   }
 

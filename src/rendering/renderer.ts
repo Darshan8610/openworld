@@ -1,4 +1,4 @@
-import { WebGPURenderer, AgXToneMapping, PCFShadowMap, Scene, PerspectiveCamera, Mesh, BoxGeometry, MeshBasicNodeMaterial } from 'three/webgpu';
+import { WebGPURenderer, AgXToneMapping, PCFSoftShadowMap, Scene, PerspectiveCamera, Mesh, BoxGeometry, MeshBasicNodeMaterial } from 'three/webgpu';
 import { QUALITY } from '../config';
 import type { QualityName } from '../config';
 
@@ -51,9 +51,9 @@ export async function createRenderer(host: HTMLElement, quality: QualityName, fo
       host.prepend(canvas);
       renderer.info.autoReset = false;
       renderer.toneMapping = AgXToneMapping;
-      renderer.toneMappingExposure = 0.82;
+      renderer.toneMappingExposure = 0.9;
       renderer.shadowMap.enabled = QUALITY[quality].shadows;
-      renderer.shadowMap.type = PCFShadowMap;
+      renderer.shadowMap.type = PCFSoftShadowMap;
       const isGPU = (renderer.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend === true;
       const context: RenderingContext = { renderer, canvas, backend: isGPU ? 'WebGPU' : 'WebGL2', fallbackReason: errors.join('; ') || (!secure ? 'WebGPU requires HTTPS or localhost' : undefined) };
       resizeRenderer(context, quality);

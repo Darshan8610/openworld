@@ -1,6 +1,6 @@
 # Wayfarer — Phase 2: Biomes & Living Terrain
 
-**Status: reconstructed / verified.** This phase turns the streamed heightfield into a
+**Status: reconstructed / graphics-upgraded / verified.** This phase turns the streamed heightfield into a
 climate-driven landscape with layered surface detail and deterministic instanced
 vegetation. The Phase 1 landform, worker streaming, floating origin, survey camera,
 day/night cycle, shareable URLs, and graphics presets remain intact. Roads, vehicles,
@@ -9,12 +9,13 @@ traffic, missions, physics, weather, audio, and full menus are still out of scop
 The reconstruction started from the specified Phase 2 baseline (`1682449`) and
 rebuilds the weak visual/technical areas rather than changing the roadmap:
 
-- richer procedural plant silhouettes with alpha-tested foliage sprays;
+- richer procedural plant silhouettes with dense alpha-tested foliage sprays and grove/meadow clustering;
 - higher-resolution, layered ground textures and stronger macro climate variation;
 - continuous biome-weight rendering instead of dominant-biome-only debug color;
 - nearest-first instance budgeting and origin-invariant wind phase;
 - shared terrain materials per LOD/mode to reduce material churn;
-- tighter, quality-scaled sun shadows and lower survey altitude for readable foreground;
+- tighter, quality-scaled soft sun shadows and lower survey altitude for readable foreground;
+- a cinematic post chain (bloom, FXAA, vignette) on Balanced/High, bypassed on Low;
 - deterministic seed-local biome overlooks for survey travel.
 
 ## Biomes
@@ -74,13 +75,13 @@ lookup.
 `src/rendering/vegetation-geometry.ts` builds one merged, vertex-colored geometry per
 species. The reconstruction replaces simple cone/blob silhouettes with:
 
-- pine: opaque inner crown mass + crossed alpha-tested needle sprays;
-- aspen: pale trunk/branches + inner crown mass + leaf-cluster cards;
-- shrub: woody base + crossed sage/leaf cards;
-- grass: tapered, bent blades with root-to-tip color and wind flex;
-- rock: distorted, faceted stone with grounded base.
+- pine: irregular whorls of drooping needle-spray branch cards + inner tufts (no solid cone);
+- aspen: pale trunk/branches + ellipsoid leaf-cluster cards;
+- shrub: woody base + mounded sage/leaf cards;
+- grass: tapered, bent blades with root-to-tip color, seed heads, and per-instance wildflower heads;
+- rock: distorted, faceted stone with mossy tops and grounded base.
 
-`src/rendering/foliage-textures.ts` generates deterministic 128×128 alpha foliage
+`src/rendering/foliage-textures.ts` generates deterministic 256×256 alpha foliage
 sprays for pine, aspen, and shrub. A per-vertex `leaf` mask selects texture alpha/color,
 while solid trunk/branch/inner-crown vertices remain opaque. A per-vertex `plantFlex`
 attribute weights wind so bark stays planted and tips move more.
@@ -121,7 +122,7 @@ meadow, forest, steppe, tundra, or snowline country. When no explicit `x`/`z` UR
 coordinates are supplied, the initial survey spawn prefers a conifer-highland overlook
 so the living terrain is visible immediately.
 
-The survey camera now flies lower (about 95 m above ground in scenic mode) so grass,
+The survey camera now flies lower (about 45–55 m above ground in scenic mode) so grass,
 shrubs, and surface detail are readable. `R` resets to the current seed's home overlook.
 
 ## Controls & UI
@@ -133,16 +134,19 @@ shrubs, and surface detail are readable. `R` resets to the current seed's home o
   wireframe, quality, seed, time, camera mode, and share link
 - HUD — current biome name, plant count/capacity, instanced batch count, FPS, draw
   calls, triangles, GPU memory estimate, tile counts, and origin shifts
-- URL — adds `vegetation=0|1` alongside existing Phase 1 parameters
+- URL — adds `vegetation=0|1` and `postfx=0|1` alongside existing Phase 1 parameters
 - `prefers-reduced-motion` — starts with wind disabled
 
 ## Lighting / shadow polish
 
-Sun shadow frusta are now quality-scaled instead of using one very large fixed box:
-Low 600 m half-width (shadows off), Balanced 700 m, High 1200 m. Shadow-map resolution
-remains preset-driven, and the shadow centre still snaps to texels to reduce swimming.
-This gives nearer vegetation more usable shadow detail without increasing the maximum
-shadow-map size.
+Sun shadow frusta are quality-scaled instead of one very large fixed box: Low 600 m
+half-width (shadows off), Balanced 700 m, High 1200 m, with soft (PCF) filtering and a
+2048px map on Balanced/High. The shadow centre snaps to texels to reduce swimming.
+
+`src/rendering/post-processing.ts` adds a lightweight cinematic chain on Balanced/High:
+HDR scene pass → threshold bloom → filmic output transform → FXAA → subtle vignette.
+Low bypasses the chain and keeps the direct MSAA path so software/mobile GPUs stay
+playable. The settings panel and `postfx=0|1` URL parameter toggle it.
 
 ## Validation
 

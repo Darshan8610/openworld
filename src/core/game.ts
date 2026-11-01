@@ -2,6 +2,7 @@ import { Scene, Fog, Vector3 } from 'three/webgpu';
 import { CONFIG, QUALITY } from '../config';
 import type { QualityName } from '../config';
 import { createRenderer, resizeRenderer } from '../rendering/renderer';
+import { PostProcessing } from '../rendering/post-processing';
 import type { RenderingContext } from '../rendering/renderer';
 import { FloatingOrigin } from './floating-origin';
 import { FixedLoop } from './fixed-loop';
@@ -28,6 +29,7 @@ export class Game {
   private readonly vegetation: VegetationManager;
   private readonly rig: SurveyCamera;
   private readonly sky: SkySystem;
+  private readonly post: PostProcessing;
   private readonly ui: Interface;
   private readonly abort = new AbortController();
   private readonly unsubscribeOrigin: () => void;
@@ -54,6 +56,9 @@ export class Game {
     this.origin.update(position);
     this.sky = new SkySystem(context.renderer, this.scene, seed, quality);
     this.sky.setHour(hour);
+    this.post = new PostProcessing(context.renderer, this.scene, this.rig.camera, quality);
+    const postParam = new URLSearchParams(location.search).get('postfx');
+    if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
     this.scene.add(this.terrain.group, this.vegetation.group);
     this.unsubscribeOrigin = this.origin.onChange((delta) => { this.terrain.rebase(delta); this.vegetation.rebase(); });
@@ -73,11 +78,13 @@ export class Game {
       vegetation: (value) => { this.vegetation.setEnabled(value); this.updateURL(); },
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
+      postfx: (value) => { this.post.setEnabled(value); this.updateURL(); },
       viewpoint: (value) => this.travelTo(value),
       stats: (value) => this.ui.showStats(value),
     });
     this.ui.syncTime(hour, this.sky.cycling);
     this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled);
+    this.ui.syncPost(this.post.isEnabled);
     this.input.onShortcut = (code) => {
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
       if (code === 'KeyH') this.ui.toggleHUD();
@@ -157,7 +164,7 @@ export class Game {
         const fog = this.scene.fog as Fog;
         fog.color.copy(this.sky.horizon);
         this.context.renderer.info.reset();
-        this.context.renderer.render(this.scene, this.rig.camera);
+        this.post.render(this.scene, this.rig.camera);
         const stats = this.terrain.stats;
         const vegetation = this.vegetation.stats;
         const biome = BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)] ?? BIOMES[0];
@@ -211,6 +218,8 @@ export class Game {
     this.terrain.reset(this.seed, quality);
     this.vegetation.setQuality(quality);
     this.sky.setQuality(quality);
+    this.post.setQuality(quality);
+    this.ui.syncPost(this.post.isEnabled);
     resizeRenderer(this.context, quality);
     const fog = this.scene.fog as Fog;
     fog.near = QUALITY[quality].viewDistance * 0.36; fog.far = QUALITY[quality].viewDistance;
@@ -241,6 +250,7 @@ export class Game {
     url.searchParams.set('hour', this.sky.hour.toFixed(2));
     url.searchParams.set('quality', this.quality);
     url.searchParams.set('vegetation', this.vegetation.vegetationEnabled ? '1' : '0');
+    url.searchParams.set('postfx', this.post.isEnabled ? '1' : '0');
     history.replaceState(null, '', url);
   }
 
@@ -277,7 +287,7 @@ export class Game {
       shifts: this.origin.shifts, hour: this.sky.hour, ...this.terrain.stats,
       quality: this.quality, biome: BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)]!.name,
       biomeDebug: this.terrain.biomeDebug, vegetationEnabled: this.vegetation.vegetationEnabled,
-      windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, vegetation: this.vegetation.stats,
+      windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, postfxEnabled: this.post.isEnabled, vegetation: this.vegetation.stats,
       touring: this.rig.touring, speed: this.rig.velocity.length(),
       fps: this.loop.fps, drawCalls: this.context.renderer.info.render.drawCalls,
       gpuBytes: this.context.renderer.info.memory.total };
@@ -288,7 +298,7 @@ export class Game {
     this.disposed = true;
     this.abort.abort(); this.unsubscribeOrigin();
     void this.context.renderer.setAnimationLoop(null);
-    this.input.dispose(); this.ui.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.sky.dispose();
+    this.input.dispose(); this.ui.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.sky.dispose(); this.post.dispose();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }
 }

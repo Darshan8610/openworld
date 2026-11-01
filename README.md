@@ -45,19 +45,19 @@ npx playwright install chromium
 | H | Hide/show HUD |
 | F3 | Performance overlay |
 
-The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset, vegetation, wind, surface detail, biome overlook travel, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1` alongside seed, position, hour, quality, and renderer.
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset, vegetation, wind, surface detail, cinematic post-processing, biome overlook travel, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1` and `postfx=0|1` alongside seed, position, hour, quality, and renderer.
 
 ## What Phase 2 adds
 
 - **Biomes:** valley meadows, conifer highlands, golden steppe, alpine tundra, and snowline peaks. Seeded temperature/moisture fields blend continuously with altitude and slope; rock and snow masks expose cliffs and summits. The HUD names the live biome, and `B` shows a climate overlay.
 - **Surface detail:** three seamless 256×256 procedural textures (grass, rock, snow) are triplanar-projected in world space, blended by biome/slope/snow, and faded with distance. Texture periods divide the floating-origin wrap so rebasing does not slide the ground pattern. Macro albedo adds forest-duff and steppe-curing variation.
-- **Vegetation:** pine, aspen, shrub, grass, and rock are placed in canonical world cells by workers, grounded on the actual terrain mesh, and packed into five global instanced batches. Trees/shrubs use procedural alpha-tested foliage sprays over solid inner mass; grass uses bent blades. Quality presets bound density, range, and capacity; coarse LODs keep a stable subset of the same plants. Nearest-first budgeting keeps the foreground stable, wind phase is origin-invariant, and range edges fade/scale instead of popping.
+- **Vegetation:** pine, aspen, shrub, grass, and rock are placed in canonical world cells by workers, grounded on the actual terrain mesh, and packed into five global instanced batches. A seeded cover field clusters plants into groves and meadow patches instead of a uniform scatter. Trees/shrubs use dense procedural alpha-tested foliage sprays (256×256) on layered branch cards; grass uses bent blades with seed heads and occasional wildflower heads. Quality presets bound density, range, and capacity; coarse LODs keep a stable subset of the same plants. Nearest-first budgeting keeps the foreground stable, wind phase is origin-invariant, and range edges fade/scale instead of popping.
 - **Lifecycle:** vegetation rebuilds on terrain revision, camera movement, origin shift, or settings change; all geometries, materials, instance buffers, and textures are disposed on teardown. Terrain materials are shared per LOD/mode. `prefers-reduced-motion` starts with wind disabled.
 - **Biome overlooks:** deterministic seed-local survey jumps to each climate region; the default spawn prefers a forest overlook so the living terrain is visible immediately.
 
 ## What Phase 1 still provides
 
-- **Renderer:** `WebGPURenderer` with AgX tone mapping, MSAA, PBR terrain material, sky-derived environment lighting, directional sun/moon, hemisphere fill, and a WebGL2 fallback path with a probe draw and runtime device-loss fallback.
+- **Renderer:** `WebGPURenderer` with AgX tone mapping, MSAA, PBR terrain material, sky-derived environment lighting, directional sun/moon, hemisphere fill, soft shadow maps, and a WebGL2 fallback path with a probe draw and runtime device-loss fallback. Balanced/High add a cinematic post chain (threshold bloom, FXAA, subtle vignette); Low bypasses it for software/mobile GPUs.
 - **Sky:** analytic Rayleigh/Mie atmosphere, procedural layered clouds, seeded star sphere with a galactic band, procedural moon, and a 12-minute day/night cycle.
 - **Terrain:** deterministic seeded simplex fBm + ridged multifractal + domain warping + valley carving, streamed as a quadtree of chunks around the camera. Six LOD levels, exact shared borders, vertical skirts, frustum culling, bounded LRU cache, and transferable worker-generated buffers.
 - **Floating origin:** simulation coordinates stay in JS doubles; GPU coordinates are re-centered every 2048 m so precision does not degrade at large distances.
@@ -73,8 +73,8 @@ src/
   core/                   game loop, fixed clock, input, floating origin, survey camera
   world/                  noise, terrain field, biomes, quadtree tiles, worker pool,
                           generator, vegetation field/manager, viewpoints, sky
-  rendering/              renderer factory, terrain material, surface textures,
-                          foliage textures, vegetation geometry
+  rendering/              renderer factory, post-processing, terrain material,
+                          surface textures, foliage textures, vegetation geometry
   ui/                     HUD/settings shell and styles
   workers/                terrain worker entry
   utils/                  seeded RNG and math

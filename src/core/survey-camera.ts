@@ -29,7 +29,7 @@ export class SurveyCamera {
   spawn(): void {
     const ground = this.terrain.heightAt(this.position.x, this.position.z);
     if (ground === undefined) return;
-    this.position.y = ground + 95;
+    this.position.y = ground + 55;
     this.previous.copy(this.position);
     this.origin.update(this.position);
     this.spawned = true;
@@ -64,7 +64,7 @@ export class SurveyCamera {
     if (ground !== undefined) {
       const floor = ground + CONFIG.camera.clearance;
       if (this.position.y < floor) { this.position.y = floor; this.velocity.y = Math.max(0, this.velocity.y); }
-      if (this.touring) this.position.y = damp(this.position.y, ground + 95, 0.45, dt);
+      if (this.touring) this.position.y = damp(this.position.y, ground + 45, 0.45, dt);
     }
     this.origin.update(this.position);
   }

@@ -60,14 +60,16 @@ export class VegetationManager {
       const capacity = preset.instanceBudgets[index]!;
       const geometry = createPlantGeometry(kind, this.quality === 'low' ? 'low' : 'full');
       const roots = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3).setUsage(DynamicDrawUsage);
-      const meta = new InstancedBufferAttribute(new Float32Array(capacity * 2), 2).setUsage(DynamicDrawUsage);
+      const meta = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3).setUsage(DynamicDrawUsage);
       geometry.setAttribute('plantRoot', roots);
       geometry.setAttribute('plantMeta', meta);
       const radius = uniform(kind === 'grass' ? preset.grassDistance : kind === 'shrub' ? preset.vegetationDistance * 0.65 : preset.vegetationDistance);
       const root = attribute('plantRoot', 'vec3');
-      const info = attribute('plantMeta', 'vec2');
+      const info = attribute('plantMeta', 'vec3');
       const leaf = attribute('leaf', 'float');
       const flex = attribute('plantFlex', 'float');
+      const flower = attribute('flower', 'float');
+      const flowerScale = mix(float(1), info.z, flower);
       const edgeStart = kind === 'grass' || kind === 'shrub' ? 0.78 : 0.94;
       const fade = float(1).sub(smoothstep(radius.mul(edgeStart), radius, distance(cameraPosition.xz, root.xz)));
       const phase = this.time.mul(1.25).add(info.x);
@@ -86,10 +88,10 @@ export class VegetationManager {
         const spray = texture(foliage);
         material.colorNode = mix(vec3(1), spray.rgb, leaf);
         material.opacityNode = mix(float(1), spray.a, leaf);
-        material.alphaTest = 0.42;
+        material.alphaTest = 0.35;
         material.alphaToCoverage = true;
       }
-      material.positionNode = root.add(positionLocal.sub(root).mul(fade)).add(sway.mul(fade));
+      material.positionNode = root.add(positionLocal.sub(root).mul(fade).mul(flowerScale)).add(sway.mul(fade).mul(flowerScale));
       const mesh = new InstancedMesh(geometry, material, capacity);
       mesh.name = `vegetation:${kind}`;
       mesh.count = 0;
@@ -161,12 +163,20 @@ export class VegetationManager {
         this.dummy.scale.setScalar(p.scale);
         this.dummy.updateMatrix();
         batch.mesh.setMatrixAt(n, this.dummy.matrix);
-        this.color.setRGB(p.brightness, p.brightness, p.brightness);
+        // Subtle per-instance hue/luminance variation keeps stands from reading
+        // as cloned copies while preserving the worker's stable brightness.
+        const v = p.random;
+        if (p.kind === 0) this.color.setRGB(0.86 + v * 0.2, 0.9 + v * 0.24, 0.82 + v * 0.16);
+        else if (p.kind === 1) this.color.setRGB(0.95 + v * 0.25, 0.92 + v * 0.18, 0.72 + v * 0.2);
+        else if (p.kind === 3) this.color.setRGB(0.85 + v * 0.35, 0.9 + v * 0.25, 0.7 + v * 0.22);
+        else this.color.setRGB(0.9 + v * 0.18, 0.92 + v * 0.16, 0.86 + v * 0.14);
+        this.color.multiplyScalar(p.brightness);
         batch.mesh.setColorAt(n, this.color);
         batch.roots.setXYZ(n, localX, localY, localZ);
         // Origin-invariant phase: origin shifts are multiples of 2048 m.
         const phase = mod(candidate.x, 1024) * 0.017 + mod(candidate.z, 1024) * 0.013 + p.yaw * 3;
-        batch.meta.setXY(n, phase, FLEXIBILITY[p.kind]! * p.scale);
+        const bloom = p.kind === 3 && p.random < 0.16 ? 1 : 0;
+        batch.meta.setXYZ(n, phase, FLEXIBILITY[p.kind]! * p.scale, bloom);
         this.counts[kind] = n + 1;
       }
       batch.mesh.count = this.counts[kind]!;
