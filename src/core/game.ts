@@ -1,3 +1,6 @@
+import { Discovery } from '../discovery/discovery';
+import { DiscoveryPanel } from '../ui/discovery-panel';
+import { GameSaveStore } from '../persistence/game-save';
 import { Scene, Fog, Vector3 } from 'three/webgpu';
 import type { PerspectiveCamera } from 'three/webgpu';
 import { CONFIG, QUALITY } from '../config';
@@ -52,6 +55,8 @@ interface MutableActor extends ActorView {
 
 /** Composition root: subsystem ownership and lifecycle are explicit. */
 export class Game {
+  private readonly discovery = new Discovery();
+  private readonly discoveryPanel: DiscoveryPanel;
   private readonly scene = new Scene();
   private readonly origin = new FloatingOrigin();
   private readonly loop = new FixedLoop();
@@ -198,7 +203,9 @@ export class Game {
     this.events.on('object:stateChanged', () => { this.saveDirty = true; });
     this.events.on('inventory:changed', () => { this.saveDirty = true; });
     if (this.restoreNotice) this.ui.toast(this.restoreNotice);
+    this.discoveryPanel = new DiscoveryPanel(this.discovery, () => this.queries, slot => this.saveGame(slot), slot => this.loadGame(slot));
     this.input.onShortcut = (code) => {
+      if (this.discoveryPanel.isOpen) return;
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
       if (code === 'KeyH') this.ui.toggleHUD();
       if (code === 'KeyL') { this.terrain.setDebug(!this.terrain.debug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
@@ -313,7 +320,7 @@ export class Game {
     if (this.disposed || document.hidden) return;
     try {
       this.loop.tick(timestamp, (dt) => {
-        if (!this.ready) return;
+        if (!this.ready || this.discoveryPanel.isOpen) return;
         if (this.mode === 'character') this.character.fixedUpdate(dt);
         else this.rig.fixedUpdate(dt);
         this.propPhysics.step(dt, this.groundSample);
@@ -321,6 +328,8 @@ export class Game {
       }, (alpha, dt) => {
         const focus = this.resolveActivePosition();
         this.world.update(dt, focus);
+        if (this.ready && this.mode === 'character') this.discovery.visit(focus);
+        this.discoveryPanel.update(focus, this.character.controller.yaw, timestamp);
         if (!this.ready) {
           this.loadTime += dt;
           // Spawn as soon as the local grid exists; keep loading distant roots behind the overlay.
@@ -535,6 +544,45 @@ export class Game {
     if (result.status === 'refused') this.ui?.toast(`Save not written: ${result.reason}`);
   }
 
+  /** Manual slots are separate from legacy per-seed object autosaves. */
+  saveGame(slot: number): void {
+    if (!this.ready || !this.character.ready) { this.ui.toast('Wait for the world to finish loading.'); return; }
+    try {
+      const p = this.character.position;
+      const result = new GameSaveStore(localStorage).save(slot, {
+        format: 'wayfarer.game', version: 1, savedAt: Date.now(), seed: this.seed,
+        player: { x: p.x, z: p.z }, hour: this.sky.hour, cycling: this.sky.cycling,
+        discovery: this.discovery.snapshot(), objects: { format: 'wayfarer.objects', version: 1, seed: this.seed,
+          savedAt: Date.now(), objects: this.objects.serializeState(), inventory: this.inventory.stacks() },
+      });
+      this.ui.toast(result.status === 'ok' ? `Saved slot ${slot}` : result.status === 'error' ? result.reason : 'Save unavailable');
+    } catch (error) { this.ui.toast(`Save failed: ${String(error)}`); }
+  }
+
+  loadGame(slot: number): void {
+    try {
+      const result = new GameSaveStore(localStorage).load(slot);
+      if (result.status !== 'ok') { this.ui.toast(result.status === 'empty' ? 'Slot is empty.' : result.reason); return; }
+      const save = result.save;
+      this.flushSave();
+      this.changeSeed(save.seed);
+      // Reset active objects as well as their baseline, so collected objects cannot linger.
+      this.objects.reset(save.seed, save.objects.objects);
+      this.inventory.restore(save.objects.inventory);
+      this.saveDirty = true;
+      this.discovery.restore(save.discovery);
+      this.sky.setHour(save.hour); this.sky.cycling = save.cycling;
+      this.ui.syncTime(save.hour, save.cycling);
+      this.rig.position.set(save.player.x, 450, save.player.z);
+      this.rig.previous.copy(this.rig.position); this.rig.touring = false; this.rig.routeFollowing = false;
+      this.character.spawnAt(save.player.x, save.player.z);
+      this.setMode('character');
+      this.origin.update(this.rig.position);
+      this.updateURL();
+      this.ui.toast(`Loaded slot ${slot} — grounded respawn`);
+    } catch (error) { this.ui.toast(`Load failed: ${String(error)}`); }
+  }
+
   private toggleTour(): void {
     if (this.rig.routeFollowing || this.rig.touring) { this.rig.routeFollowing = false; this.rig.touring = false; }
     else this.rig.touring = true;
@@ -571,6 +619,7 @@ export class Game {
   private changeSeed(seed: string): void {
     this.beginLoading();
     this.seed = seed;
+    this.discovery.restore({ cells: [], waypoint: null });
     this.origin.reset();
     this.terrain.reset(seed, this.quality);
     this.vegetation.reset();
@@ -696,6 +745,7 @@ export class Game {
   snapshot() {
     const focus = this.resolveActivePosition();
     return { ready: this.ready, seed: this.seed, backend: this.context.backend,
+      discovery: this.discovery.snapshot(),
       mode: this.mode, character: this.character.snapshot(),
       characterPosition: this.character.position.toArray(),
       position: focus.toArray(), origin: this.origin.absolute.toArray(),
@@ -721,6 +771,7 @@ export class Game {
     this.abort.abort(); this.unsubscribeOrigin();
     void this.context.renderer.setAnimationLoop(null);
     if (this.saveDirty) this.flushSave();
+    this.discoveryPanel.dispose();
     this.input.dispose(); this.ui.dispose(); this.world.dispose();
     this.physicsDebug?.dispose();
     this.physics?.dispose();

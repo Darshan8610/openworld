@@ -79,3 +79,10 @@ These extend the Phase 4 contracts; both remain in force.
 5. **Growth rules** — every system streams, respects a budget and disposes its GPU
    resources; simulation runs on the fixed step; no unbounded object, body, particle or
    listener creation.
+
+## Phase 11 implementation progress
+
+Milestone 11.1 adds a canonical-coordinate local chart, waypoint, bounded character
+exploration and three validated manual game-save slots. This is a partial Phase 11,
+not the completed map/navigation/mission system. See [PHASE11.md](PHASE11.md) for
+source audit, integration model, validation results and remaining work.

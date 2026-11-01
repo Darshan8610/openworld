@@ -193,3 +193,13 @@ The three phase lines were developed against the same Phase 3 base, so this bran
 ## Assets and licenses
 
 No paid assets. Terrain, sky, stars, moon, biomes, surface/road textures, vegetation, cliffs, road signs, props, objects and materials are procedural. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed; Rapier 3D is Apache-2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Phase 11 — first discovery/persistence milestone
+
+Press **M** or **Map · M** for the local world chart. Click to place a waypoint,
+zoom, or use the three manual save/load slots. Slots restore the world seed,
+character XZ via grounded respawn, time, discovery, waypoint, objects and inventory.
+The existing per-seed object autosave remains separate. Corrupt/newer game slots
+are refused rather than overwritten. Phase 11 is **in progress**: routing, minimap,
+mission infrastructure and other-phase entity adapters are not yet implemented.
+See [Phase 11 engineering notes](docs/PHASE11.md).
