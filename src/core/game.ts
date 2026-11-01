@@ -9,7 +9,7 @@ import type { BuildingInteraction } from '../world/buildings/types';
 import { FrameProfiler } from './profiler';
 import { AdaptiveQualityController } from './adaptive-quality';
 import { GameSaveStore } from '../persistence/game-save';
-import { Scene, Fog, Vector3 } from 'three/webgpu';
+import { Scene, Fog, Vector3, Raycaster } from 'three/webgpu';
 import type { PerspectiveCamera, Object3D } from 'three/webgpu';
 import { CONFIG, QUALITY } from '../config';
 import type { QualityName } from '../config';
@@ -400,6 +400,21 @@ export class Game {
           this.origin.update(this.character.controller.position);
         },
         duck: (level) => this.audio.setDuck(level),
+        scene: this.scene,
+        losBlocked: (ax, az, bx, bz) => this.sightLineBlocked(ax, az, bx, bz),
+        player: () => {
+          const controller = this.character.controller;
+          const stance = controller.stance;
+          return {
+            x: controller.position.x,
+            z: controller.position.z,
+            yaw: controller.yaw,
+            lit: false, // StoryGame overrides with the flashlight state
+            onFoot: this.mode === 'character' && !this.driving && this.character.ready,
+            crouched: stance === 'crouch',
+            sprinting: stance === 'sprint',
+          };
+        },
       });
       this.scene.add(this.story.bounds.group);
       this.cameraSolids.push(this.story.bounds.group);
@@ -451,6 +466,7 @@ export class Game {
         this.selectDialogueTopic(Number(code.slice(5)) - 1);
       }
       if (code === 'KeyV') { this.vegetation.setEnabled(!this.vegetation.vegetationEnabled); this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled); this.updateURL(); }
+      if (code === 'KeyY') this.story?.toggleFlashlight();
       if (code === 'KeyT') { this.toggleTour(); this.ui.dismissIntro(); }
       if (code === 'KeyG') { if (this.rig.routeFollowing) this.rig.routeFollowing = false; else { const r = this.roads.routeAt(this.rig.position); this.rig.startRoute(r.corridor, r.station); } this.ui.dismissIntro(); this.updateURL(); }
       // Phase 4 keeps the developer physics sandbox on X; C is the Phase 5 view toggle.
@@ -967,6 +983,32 @@ export class Game {
       x: porch.x, y: porch.y, z: porch.z, yaw: 2.6,
       anchors: { home: porch, work: porch, leisure: porch },
     });
+  }
+
+  private readonly sightRay = new Raycaster();
+  private readonly sightFrom = new Vector3();
+  private readonly sightDir = new Vector3();
+
+  /**
+   * Act II patrol line-of-sight: does anything solid (buildings, barrier
+   * dressing) sit between two world points? Runs in floating-origin local
+   * space against the same collider set the third-person camera uses.
+   */
+  private sightLineBlocked(ax: number, az: number, bx: number, bz: number): boolean {
+    const dx = bx - ax; const dz = bz - az;
+    const flat = Math.hypot(dx, dz);
+    if (flat < 1 || flat > 60) return false; // beyond any detection envelope
+    const origin = this.origin.absolute;
+    const ay = (this.terrain.heightAt(ax, az) ?? 0) + 1.7 - origin.y;
+    const by = (this.terrain.heightAt(bx, bz) ?? 0) + 1.3 - origin.y;
+    this.sightFrom.set(ax - origin.x, ay, az - origin.z);
+    this.sightDir.set(bx - origin.x, by, bz - origin.z).sub(this.sightFrom);
+    const distance = this.sightDir.length();
+    if (distance < 0.5) return false;
+    this.sightRay.set(this.sightFrom, this.sightDir.normalize());
+    this.sightRay.near = 0;
+    this.sightRay.far = distance - 0.5;
+    return this.sightRay.intersectObjects(this.cameraSolids, true).length > 0;
   }
 
   /** Campaign walls and ravine: clamp whatever the player drives or walks. */

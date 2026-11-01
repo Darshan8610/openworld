@@ -72,7 +72,7 @@ export const STORY_MISSIONS: readonly StoryMission[] = [
   { id: 'a2_trail', act: 'act2', title: 'Shadows in the Forest', brief: 'Take the logging trail to the Forestry Station', point: STORY_POINTS.forestryApproach },
   { id: 'a2_gate', act: 'act2', title: 'Shadows in the Forest', brief: 'Unlock the Forestry Station gate', point: STORY_POINTS.forestryGate },
   { id: 'a2_logs', act: 'act2', title: 'Shadows in the Forest', brief: 'Recover the three encrypted audio logs', point: STORY_POINTS.dispatchDesk },
-  { id: 'a2_terminal', act: 'act2', title: 'Shadows in the Forest', brief: 'Reach the master communications terminal', point: STORY_POINTS.terminal },
+  { id: 'a2_terminal', act: 'act2', title: 'Shadows in the Forest', brief: 'Reach the communications terminal — unseen', point: STORY_POINTS.terminal },
   { id: 'a2_radio', act: 'act2', title: 'Shadows in the Forest', brief: 'Overhear the distress call from the Radio Tower', point: STORY_POINTS.radioRelay },
   // Act III — The Lookout Climax (~30 min)
   { id: 'a3_keys', act: 'act3', title: 'The Lookout', brief: 'Find the utility truck keys at the dispatch desk', point: STORY_POINTS.truckKeys },
@@ -138,6 +138,7 @@ export const STORY_MISSION_DEFS: readonly MissionDef[] = [
   ] },
   { id: 'a2_terminal', title: 'Shadows in the Forest', objectives: [
     reach('terminal', 'Reach the master communications terminal', STORY_POINTS.terminal),
+    flag('evade', 'Slip past whatever is circling the compound', 'evaded_patrol'),
   ] },
   { id: 'a2_radio', title: 'Shadows in the Forest', objectives: [
     interacted('relay', 'Monitor the backup radio relay', 'story:radio-relay'),

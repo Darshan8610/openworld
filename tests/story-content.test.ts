@@ -46,8 +46,10 @@ describe('story content ↔ mission contract', () => {
 
   it('supplies every flag objective from a prop, dialogue or authored vehicle beat', () => {
     const propFlags = new Set(STORY_PROPS.map((prop) => prop.flag).filter(Boolean));
-    // evelyn_keycard arrives through Evelyn's dialogue tree.
+    // evelyn_keycard arrives through Evelyn's dialogue tree; evaded_patrol is
+    // granted by StoryGame when the Act II terminal is reached unseen.
     propFlags.add('evelyn_keycard');
+    propFlags.add('evaded_patrol');
     for (const def of STORY_MISSION_DEFS) {
       for (const objective of def.objectives) {
         if (objective.kind !== 'flag') continue;

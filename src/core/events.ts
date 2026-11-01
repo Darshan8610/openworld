@@ -54,6 +54,8 @@ export interface GameEventMap {
   'mission:flagSet': { name: string; value: boolean | number | string };
   /** Phase 11.3 — the story campaign changed act (weather/time/cutscenes). */
   'story:actChanged': { act: string };
+  /** Act II patrol spotted Jack (times = streak count for this playthrough). */
+  'story:spotted': { times: number };
 }
 export type GameEventType = keyof GameEventMap;
 type Handler<K extends GameEventType> = (payload: GameEventMap[K]) => void;

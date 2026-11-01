@@ -5,7 +5,8 @@ import type { Inventory } from '../interaction/inventory';
 import type { InteractionProvider } from '../interaction/types';
 import type { WeatherKind } from '../environment/weather';
 import type { ConversationView } from '../npc/types';
-import type { ActId } from './campaign';
+import type { Object3D } from 'three/webgpu';
+import { CAMPAIGN, landmark, type ActId } from './campaign';
 import type { BannerKind, MissionDirector } from './mission-director';
 import type { NarrativeState } from './narrative-state';
 import { CampaignBounds } from './bounds';
@@ -16,6 +17,9 @@ import { StoryProps } from './story-props';
 import { STORY_PROPS } from './content';
 import { EVELYN_TREE, StoryDialogueRunner } from './dialogue';
 import { buildFinaleShot, buildOpeningShot, buildRelayShot, buildRevelationShot } from './opening';
+import { ShadowPatrol, type PatrolPlayer } from './shadow-patrol';
+import { StoryAtmosphere } from './atmosphere';
+import { StoryFlashlight } from './flashlight';
 
 /** What the story layer needs from the interface — structural, no UI imports. */
 export interface StoryUi {
@@ -46,6 +50,12 @@ export interface StoryDeps {
   readonly spawnArrival: () => void;
   /** Duck the master mix for cutscenes (1 = full volume). */
   readonly duck: (level: number) => void;
+  /** Scene root for atmosphere dressing, the patrol silhouette and the torch. */
+  readonly scene: { add(object: Object3D): void; remove(object: Object3D): void };
+  /** True when solids occlude a sight segment (buildings + barrier dressing). */
+  readonly losBlocked: (ax: number, az: number, bx: number, bz: number) => boolean;
+  /** Live player probe for the patrol's detection model. */
+  readonly player: () => PatrolPlayer;
 }
 
 /**
@@ -62,9 +72,15 @@ export class StoryGame {
   readonly director: MissionDirector;
   readonly dialogue = new StoryDialogueRunner();
   private readonly props: StoryProps;
+  /** Act II shadow patrol + highway night dressing (hazard wrecks, signs). */
+  readonly patrol: ShadowPatrol;
+  readonly atmosphere: StoryAtmosphere;
+  /** Jack's flashlight (Y) — spec'd third primary light after headlights. */
+  readonly flashlight: StoryFlashlight;
   private readonly unsubscribers: (() => void)[] = [];
   private openingDone = false;
   private creditsShown = false;
+  private spottedSubtitle = 0;
 
   constructor(private readonly deps: StoryDeps) {
     this.cinematic = new CinematicDirector({
@@ -95,7 +111,24 @@ export class StoryGame {
       ground: deps.ground,
     });
     for (const spec of STORY_PROPS) this.props.add(spec);
+    const station = landmark('forestry');
+    this.patrol = new ShadowPatrol({ x: station.x, z: station.z }, 26, {
+      ground: deps.ground,
+      losBlocked: deps.losBlocked,
+      onSpotted: (times) => this.onSpotted(times),
+    });
+    deps.scene.add(this.patrol.group);
+    this.atmosphere = new StoryAtmosphere({
+      ground: deps.ground, roadZ: deps.roadZ, bounds: CAMPAIGN.bounds,
+      diner: landmark('diner'), motel: landmark('motel'),
+    });
+    deps.scene.add(this.atmosphere.group);
+    this.flashlight = new StoryFlashlight(
+      { add: (object) => deps.scene.add(object), remove: (object) => deps.scene.remove(object) },
+      deps.ground,
+    );
     this.wireEvents();
+    this.syncPatrol();
   }
 
   // ---- lifecycle ------------------------------------------------------------
@@ -117,9 +150,29 @@ export class StoryGame {
     });
   }
 
-  /** Advance cinematics once per rendered frame. */
+  /** Advance cinematics, night dressing and the patrol once per frame. */
   update(dt: number): void {
     this.cinematic.update(dt);
+    this.atmosphere.update(dt);
+    // The hunt only runs when the player is in control (never during shots).
+    if (!this.cinematic.active) {
+      const player = this.deps.player();
+      this.flashlight.update(player);
+      this.patrol.update(dt, { ...player, lit: this.flashlight.enabled });
+      if (this.spottedSubtitle > 0) {
+        this.spottedSubtitle -= dt;
+        if (this.spottedSubtitle <= 0) this.deps.ui.setSubtitle(null);
+      }
+    } else {
+      this.flashlight.update({ ...this.deps.player(), onFoot: false });
+    }
+  }
+
+  /** Y — toggle the flashlight. Returns the new state (null = no story). */
+  toggleFlashlight(): boolean {
+    const on = this.flashlight.toggle();
+    this.deps.ui.toast(on ? 'Flashlight on — keep it off near the Station.' : 'Flashlight off.');
+    return on;
   }
 
   /** Clamp hook target (the game applies the actual clamp each fixed step). */
@@ -132,6 +185,7 @@ export class StoryGame {
     this.narrative.restore(value);
     this.openingDone = true; // a save always means the opening already played
     if (this.director.reconcile()) this.openingDone = true;
+    this.syncPatrol();
     return valid;
   }
 
@@ -191,6 +245,9 @@ export class StoryGame {
     this.director.dispose();
     this.props.dispose();
     this.bounds.dispose();
+    this.patrol.dispose();
+    this.atmosphere.dispose();
+    this.flashlight.dispose();
     while (this.unsubscribers.length > 0) this.unsubscribers.pop()?.();
   }
 
@@ -205,11 +262,29 @@ export class StoryGame {
     const { events } = this.deps;
     this.unsubscribers.push(events.on('object:interacted', ({ id }) => {
       if (id === 'story:door-room4') this.openEvelynDialogue();
+      // The terminal credits a clean approach: reached while it is not hunting.
+      if (id === 'story:terminal') this.director.setFlag('evaded_patrol', this.patrol.creditsEvade());
     }));
     this.unsubscribers.push(events.on('mission:completed', ({ id }) => {
+      this.syncPatrol();
       if (id === 'a2_radio') void this.playShot(buildRelayShot(this.deps.ground));
       else if (id === 'a3_cabin') void this.playShot(buildRevelationShot(this.deps.ground));
     }));
+  }
+
+  /** Wake the patrol only while the station investigation is live. */
+  private syncPatrol(): void {
+    const id = this.director.currentMissionId;
+    this.patrol.active = id === 'a2_logs' || id === 'a2_terminal';
+  }
+
+  private onSpotted(times: number): void {
+    this.deps.events.emit('story:spotted', { times });
+    this.deps.ui.toast('Something turned toward you — crouch and break its line of sight.');
+    if (!this.cinematic.active) {
+      this.deps.ui.setSubtitle('...it knows where you are.');
+      this.spottedSubtitle = 3.4;
+    }
   }
 
   private onStoryDoor(id: string): void {

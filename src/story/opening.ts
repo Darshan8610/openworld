@@ -95,13 +95,15 @@ export function buildFinaleShot(ground: Sampler): CinematicShot {
     subtitles: [
       { at: 0.4, duration: 3.4, text: '[The tower lights burst. Sirens die into a silence with weight to it.]', speaker: undefined },
       { at: 4.2, duration: 4.4, text: '[Far below, the fog over Blackwood begins, at last, to lift.]', speaker: undefined },
-      { at: 9.4, duration: 4.6, text: 'Jack walks to the remaining vehicle as morning breaks through the pines.', speaker: undefined },
+      { at: 9.4, duration: 4.2, text: 'Jack walks to the remaining vehicle as morning breaks through the pines.', speaker: undefined },
+      { at: 13.8, duration: 2.6, text: 'The tape keeps running. Nobody answers the office phone. Not anymore.', speaker: 'Jack (journal)' },
     ],
     keyframes: [
       { at: 0, position: [tower.x - 12, base + 10, tower.z + 10], lookAt: [tower.x, base + 8, tower.z], fov: 48 },
       { at: 4, position: [tower.x - 20, base + 12, tower.z + 22], lookAt: [tower.x, base + 9, tower.z], fov: 52 },
       { at: 9, position: [tower.x - 30, base + 16, tower.z + 44], lookAt: [(tower.x + diner.x) / 2, (base + valley) / 2 + 6, (tower.z + diner.z) / 2], fov: 56 },
       { at: 14, position: [tower.x - 40, base + 20, tower.z + 70], lookAt: [diner.x, valley + 8, diner.z], fov: 60 },
+      { at: 16.6, position: [tower.x - 46, base + 22, tower.z + 86], lookAt: [diner.x, valley + 10, diner.z], fov: 62 },
     ],
   };
 }
