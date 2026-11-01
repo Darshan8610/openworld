@@ -33,9 +33,11 @@ export class SkySystem {
   private environment?: RenderTarget;
   private environmentTimer: number = CONFIG.sky.environmentInterval;
   private lastEnvironmentHour = -100;
+  private shadowExtent: number;
   private readonly target = new Vector3();
 
-  constructor(private readonly renderer: WebGPURenderer, private readonly scene: Scene, seed: string) {
+  constructor(private readonly renderer: WebGPURenderer, private readonly scene: Scene, seed: string, quality: QualityName = 'balanced') {
+    this.shadowExtent = QUALITY[quality].shadowExtent;
     this.sky.scale.setScalar(30000);
     this.sky.renderOrder = -100;
     this.sky.frustumCulled = false;
@@ -85,14 +87,14 @@ export class SkySystem {
     this.group.add(this.moon);
 
     this.sun.castShadow = true;
-    this.sun.shadow.camera.left = -1800;
-    this.sun.shadow.camera.right = 1800;
-    this.sun.shadow.camera.top = 1800;
-    this.sun.shadow.camera.bottom = -1800;
+    this.sun.shadow.camera.left = -this.shadowExtent;
+    this.sun.shadow.camera.right = this.shadowExtent;
+    this.sun.shadow.camera.top = this.shadowExtent;
+    this.sun.shadow.camera.bottom = -this.shadowExtent;
     this.sun.shadow.camera.near = 100;
     this.sun.shadow.camera.far = 10000;
     this.sun.shadow.bias = -0.00015;
-    this.sun.shadow.normalBias = 3;
+    this.sun.shadow.normalBias = 1.5;
     this.scene.add(this.sun, this.sun.target, this.moonLight, this.moonLight.target, this.ambient, this.group);
     this.update(0, new Vector3(), new PerspectiveCamera(), true);
   }
@@ -138,7 +140,7 @@ export class SkySystem {
     this.moonLight.target.position.copy(worldPosition);
     this.target.copy(worldPosition);
     // Snap the shadow centre to texels to avoid swimming as the survey camera moves.
-    const texel = 3600 / QUALITY.balanced.shadowSize;
+    const texel = (this.shadowExtent * 2) / this.sun.shadow.mapSize.x;
     this.target.x = Math.round(this.target.x / texel) * texel;
     this.target.z = Math.round(this.target.z / texel) * texel;
     this.sun.target.position.copy(this.target);
@@ -163,7 +165,13 @@ export class SkySystem {
 
   setQuality(quality: QualityName): void {
     this.renderer.shadowMap.enabled = QUALITY[quality].shadows;
+    this.shadowExtent = QUALITY[quality].shadowExtent;
     this.sun.shadow.mapSize.setScalar(QUALITY[quality].shadowSize);
+    this.sun.shadow.camera.left = -this.shadowExtent;
+    this.sun.shadow.camera.right = this.shadowExtent;
+    this.sun.shadow.camera.top = this.shadowExtent;
+    this.sun.shadow.camera.bottom = -this.shadowExtent;
+    this.sun.shadow.camera.updateProjectionMatrix();
     this.sun.shadow.map?.dispose();
     this.sun.shadow.map = null;
   }

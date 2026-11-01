@@ -20,6 +20,7 @@ export function generateTile(request: TileRequest, terrain: TerrainField): TileR
   const normals = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const surface = new Float32Array(count * 3);
+  const biomeWeights = new Float32Array(count * 4);
   const climate = createClimateSample();
   const heights = new Float32Array(gridSize);
   const indices = new Uint32Array(n * n * 6 + 4 * n * 6);
@@ -50,6 +51,10 @@ export function generateTile(request: TileRequest, terrain: TerrainField): TileR
     surface[index * 3] = climate.rock;
     surface[index * 3 + 1] = climate.snow;
     surface[index * 3 + 2] = climate.dominant;
+    biomeWeights[index * 4] = climate.weights[0];
+    biomeWeights[index * 4 + 1] = climate.weights[1];
+    biomeWeights[index * 4 + 2] = climate.weights[2];
+    biomeWeights[index * 4 + 3] = climate.weights[3];
   }
 
   let cursor = 0;
@@ -76,6 +81,7 @@ export function generateTile(request: TileRequest, terrain: TerrainField): TileR
         colors[next * 3 + axis] = colors[source * 3 + axis]!;
         surface[next * 3 + axis] = surface[source * 3 + axis]!;
       }
+      for (let axis = 0; axis < 4; axis++) biomeWeights[next * 4 + axis] = biomeWeights[source * 4 + axis]!;
       positions[next * 3 + 1] = positions[next * 3 + 1]! - skirt;
       next++;
     }
@@ -100,7 +106,7 @@ export function generateTile(request: TileRequest, terrain: TerrainField): TileR
   return {
     type: 'tile', id: request.id, epoch: request.epoch, key: tileKey(request),
     coord: { x: request.x, z: request.z, level: request.level, rootX: request.rootX, rootZ: request.rootZ },
-    segments: n, positions, normals, colors, surface, vegetation: generateVegetation(request, terrain.seed, terrain, surfaceHeight), indices,
+    segments: n, positions, normals, colors, surface, biomeWeights, vegetation: generateVegetation(request, terrain.seed, terrain, surfaceHeight), indices,
     minHeight: minHeight - skirt, maxHeight,
   };
 }

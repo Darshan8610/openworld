@@ -10,6 +10,8 @@ import { SurveyCamera } from './survey-camera';
 import { TerrainManager } from '../world/terrain-manager';
 import { VegetationManager } from '../world/vegetation-manager';
 import { BIOMES } from '../world/biomes';
+import type { BiomeId } from '../world/biomes';
+import { findBiomeViewpoint } from '../world/viewpoints';
 import { SkySystem } from '../world/sky';
 import { Interface } from '../ui/interface';
 import { normalizeSeed, randomSeed } from '../utils/random';
@@ -48,9 +50,9 @@ export class Game {
     if (new URLSearchParams(location.search).get('vegetation') === '0') this.vegetation.setEnabled(false);
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) this.vegetation.setWind(false);
     this.rig = new SurveyCamera(this.input, this.origin, this.terrain);
-    this.rig.position.copy(position); this.rig.previous.copy(position);
+    this.rig.position.copy(position); this.rig.previous.copy(position); this.rig.home.copy(position);
     this.origin.update(position);
-    this.sky = new SkySystem(context.renderer, this.scene, seed);
+    this.sky = new SkySystem(context.renderer, this.scene, seed, quality);
     this.sky.setHour(hour);
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
     this.scene.add(this.terrain.group, this.vegetation.group);
@@ -71,6 +73,7 @@ export class Game {
       vegetation: (value) => { this.vegetation.setEnabled(value); this.updateURL(); },
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
+      viewpoint: (value) => this.travelTo(value),
       stats: (value) => this.ui.showStats(value),
     });
     this.ui.syncTime(hour, this.sky.cycling);
@@ -104,6 +107,10 @@ export class Game {
     const hour = params.has('hour') && Number.isFinite(Number(params.get('hour'))) ? clamp(Number(params.get('hour')), 0, 23.99) : CONFIG.sky.initialHour;
     const coordinate = (key: string) => { const value = Number(params.get(key)); return params.has(key) && Number.isFinite(value) ? clamp(value, -1e12, 1e12) : 0; };
     const position = new Vector3(coordinate('x'), 450, coordinate('z'));
+    if (!params.has('x') && !params.has('z')) {
+      const vista = findBiomeViewpoint(seed, 1);
+      position.set(vista.x, vista.y + 110, vista.z);
+    }
     const context = await createRenderer(host, quality, params.get('renderer') === 'webgl');
     return new Game(context, seed, quality, hour, position);
   }
@@ -190,6 +197,8 @@ export class Game {
     this.terrain.reset(seed, this.quality);
     this.vegetation.reset();
     this.sky.reseed(seed);
+    const vista = findBiomeViewpoint(seed, 1);
+    this.rig.home.set(vista.x, vista.y + 110, vista.z);
     this.rig.reset();
     this.ui.setSeed(seed);
     this.updateURL();
@@ -206,6 +215,21 @@ export class Game {
     const fog = this.scene.fog as Fog;
     fog.near = QUALITY[quality].viewDistance * 0.36; fog.far = QUALITY[quality].viewDistance;
     try { localStorage.setItem('wayfarer.quality', quality); } catch { /* Storage is optional. */ }
+    this.updateURL();
+  }
+
+  private travelTo(biome: BiomeId): void {
+    const radius = biome >= 3 ? 9000 : 6000;
+    const vista = findBiomeViewpoint(this.seed, biome, this.rig.position.x, this.rig.position.z, radius);
+    this.beginLoading();
+    this.rig.position.set(vista.x, vista.y + 110, vista.z);
+    this.rig.previous.copy(this.rig.position);
+    this.rig.velocity.set(0, 0, 0);
+    this.rig.spawned = false;
+    this.rig.touring = true;
+    this.origin.update(this.rig.position);
+    this.vegetation.rebase();
+    this.ui.toast(`Travelling to ${BIOMES[biome].name.toLowerCase()}`);
     this.updateURL();
   }
 

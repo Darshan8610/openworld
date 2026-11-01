@@ -62,6 +62,7 @@ export class TerrainManager {
     geometry.setAttribute('normal', new BufferAttribute(result.normals, 3));
     geometry.setAttribute('color', new BufferAttribute(result.colors, 3));
     geometry.setAttribute('surface', new BufferAttribute(result.surface, 3));
+    geometry.setAttribute('biomeWeights', new BufferAttribute(result.biomeWeights, 4));
     geometry.setIndex(new BufferAttribute(result.indices, 1));
     const size = tileSize(result.coord.level);
     const center = new Vector3(
@@ -260,7 +261,6 @@ export class TerrainManager {
   get debug(): boolean { return this.debugEnabled; }
   setWireframe(enabled: boolean): void {
     this.material.setWireframe(enabled);
-    for (const tile of this.cache.values()) { tile.surface.wireframe = enabled; tile.diagnostic.wireframe = enabled; tile.biomeMaterial.wireframe = enabled; }
   }
 
   reset(seed: string, quality: QualityName): void {
@@ -294,6 +294,7 @@ export class TerrainManager {
   }
 
   private disposeTile(tile: TerrainTile): void {
-    tile.mesh.geometry.dispose(); tile.surface.dispose(); tile.diagnostic.dispose(); tile.biomeMaterial.dispose();
+    // Materials are shared per LOD/mode by the terrain material factory.
+    tile.mesh.geometry.dispose();
   }
 }

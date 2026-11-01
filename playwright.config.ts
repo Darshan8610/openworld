@@ -9,10 +9,10 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:5173',
-    viewport: { width: 1100, height: 720 },
+    viewport: { width: 1000, height: 640 },
     launchOptions: {
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
-      args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader'],
+      args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--in-process-gpu', '--disable-dev-shm-usage'],
     },
   },
   webServer: {

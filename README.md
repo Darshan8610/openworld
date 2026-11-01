@@ -16,8 +16,8 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # unit tests (noise, streaming, origin, terrain, biomes, vegetation)
-npm run test:browser  # Playwright browser tests (requires Chromium)
+npm test              # 31 unit tests (noise, streaming, origin, terrain, biomes, vegetation, overlooks)
+npm run test:browser  # 9 Playwright browser tests (requires Chromium)
 ```
 
 For browser tests, install Chromium once:
@@ -45,14 +45,15 @@ npx playwright install chromium
 | H | Hide/show HUD |
 | F3 | Performance overlay |
 
-The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset, vegetation, wind, surface detail, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1` alongside seed, position, hour, quality, and renderer.
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset, vegetation, wind, surface detail, biome overlook travel, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1` alongside seed, position, hour, quality, and renderer.
 
 ## What Phase 2 adds
 
 - **Biomes:** valley meadows, conifer highlands, golden steppe, alpine tundra, and snowline peaks. Seeded temperature/moisture fields blend continuously with altitude and slope; rock and snow masks expose cliffs and summits. The HUD names the live biome, and `B` shows a climate overlay.
-- **Surface detail:** three seamless procedural textures (grass, rock, snow) are triplanar-projected in world space, blended by biome/slope/snow, and faded with distance. Texture periods divide the floating-origin wrap so rebasing does not slide the ground pattern.
-- **Vegetation:** pine, aspen, shrub, grass, and rock are placed in canonical world cells by workers, grounded on the actual terrain mesh, and packed into five global instanced batches. Quality presets bound density, range, and capacity; coarse LODs keep a stable subset of the same plants. A height-weighted wind shader animates foliage, and range edges fade/scale instead of popping.
-- **Lifecycle:** vegetation rebuilds on terrain revision, camera movement, origin shift, or settings change; all geometries, materials, instance buffers, and textures are disposed on teardown. `prefers-reduced-motion` starts with wind disabled.
+- **Surface detail:** three seamless 256×256 procedural textures (grass, rock, snow) are triplanar-projected in world space, blended by biome/slope/snow, and faded with distance. Texture periods divide the floating-origin wrap so rebasing does not slide the ground pattern. Macro albedo adds forest-duff and steppe-curing variation.
+- **Vegetation:** pine, aspen, shrub, grass, and rock are placed in canonical world cells by workers, grounded on the actual terrain mesh, and packed into five global instanced batches. Trees/shrubs use procedural alpha-tested foliage sprays over solid inner mass; grass uses bent blades. Quality presets bound density, range, and capacity; coarse LODs keep a stable subset of the same plants. Nearest-first budgeting keeps the foreground stable, wind phase is origin-invariant, and range edges fade/scale instead of popping.
+- **Lifecycle:** vegetation rebuilds on terrain revision, camera movement, origin shift, or settings change; all geometries, materials, instance buffers, and textures are disposed on teardown. Terrain materials are shared per LOD/mode. `prefers-reduced-motion` starts with wind disabled.
+- **Biome overlooks:** deterministic seed-local survey jumps to each climate region; the default spawn prefers a forest overlook so the living terrain is visible immediately.
 
 ## What Phase 1 still provides
 
@@ -71,9 +72,9 @@ src/
   main.ts                 bootstrap
   core/                   game loop, fixed clock, input, floating origin, survey camera
   world/                  noise, terrain field, biomes, quadtree tiles, worker pool,
-                          generator, vegetation field/manager, sky
+                          generator, vegetation field/manager, viewpoints, sky
   rendering/              renderer factory, terrain material, surface textures,
-                          vegetation geometry
+                          foliage textures, vegetation geometry
   ui/                     HUD/settings shell and styles
   workers/                terrain worker entry
   utils/                  seeded RNG and math
@@ -86,7 +87,7 @@ See [docs/PHASE1.md](docs/PHASE1.md) for the original world foundation and [docs
 
 - Terrain and vegetation placement run in 2–4 Web Workers depending on preset; the main thread only uploads finished buffers and packs instances.
 - Pixel ratio is capped per preset and by a total-pixel budget to protect 4K/retina displays.
-- Vegetation uses five instanced draw batches with fixed capacities. Low/Balanced/High budgets are documented in [docs/PHASE2.md](docs/PHASE2.md); budget truncation is reported in debug stats.
+- Vegetation uses five instanced draw batches with fixed capacities and nearest-first budgeting. Low/Balanced/High budgets are documented in [docs/PHASE2.md](docs/PHASE2.md); budget truncation is reported in debug stats. The Low preset also uses reduced-detail plant geometry.
 - Chunk geometry, materials, instance buffers, and textures are disposed on eviction, seed change, quality change, and teardown.
 - The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, and instanced batch count.
 - Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there.

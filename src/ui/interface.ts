@@ -1,6 +1,7 @@
 import type { BackendName } from '../rendering/renderer';
 import type { QualityName } from '../config';
 import { BIOMES } from '../world/biomes';
+import type { BiomeId } from '../world/biomes';
 
 export interface UIActions {
   seed: (seed: string) => void;
@@ -18,6 +19,7 @@ export interface UIActions {
   vegetation: (enabled: boolean) => void;
   wind: (enabled: boolean) => void;
   detail: (enabled: boolean) => void;
+  viewpoint: (biome: BiomeId) => void;
   stats: (enabled: boolean) => void;
 }
 export interface UIStats {
@@ -57,6 +59,8 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <label class="switch-row" for="cycle"><span>Let the day unfold<small>A full day in 12 minutes</small></span><input type="checkbox" id="cycle" checked role="switch"></label>
           <label class="field-label" for="quality">Graphics preset</label><select id="quality"><option value="low">Low · lighter on your device</option><option value="balanced">Balanced · recommended</option><option value="high">High · extended horizons</option></select>
           <div class="nature-heading"><span class="eyebrow">THE LIVING LANDSCAPE</span><span>05 BIOMES</span></div>
+          <label class="field-label" for="biome-view">Biome overlook<span>Seed-local survey jump</span></label>
+          <select id="biome-view" aria-label="Travel to biome"><option value="">Choose a climate region…</option>${BIOMES.map((biome, i) => `<option value="${i}">${biome.name}</option>`).join('')}</select>
           <label class="switch-row" for="vegetation"><span>Vegetation <kbd>V</kbd><small>Trees, sage, grass & weathered stone</small></span><input type="checkbox" id="vegetation" checked role="switch"></label>
           <label class="switch-row" for="wind"><span>Wind in the canopy<small>Procedural, height-weighted motion</small></span><input type="checkbox" id="wind" checked role="switch"></label>
           <label class="switch-row" for="detail"><span>Terrain surface detail<small>Triplanar grass, rock & snow</small></span><input type="checkbox" id="detail" checked role="switch"></label>
@@ -99,6 +103,7 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     on('wireframe', 'change', () => actions.wireframe($<HTMLInputElement>('#wireframe').checked));
     on('biome-debug', 'change', () => actions.biomeDebug($<HTMLInputElement>('#biome-debug').checked));
     on('vegetation', 'change', () => actions.vegetation($<HTMLInputElement>('#vegetation').checked));
+    on('biome-view', 'change', () => { const value = $<HTMLSelectElement>('#biome-view').value; if (value !== '') { actions.viewpoint(Number(value) as BiomeId); $<HTMLSelectElement>('#biome-view').value = ''; } });
     on('wind', 'change', () => actions.wind($<HTMLInputElement>('#wind').checked));
     on('detail', 'change', () => actions.detail($<HTMLInputElement>('#detail').checked));
     on('show-stats', 'change', () => this.showStats($<HTMLInputElement>('#show-stats').checked));

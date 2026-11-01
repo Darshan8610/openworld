@@ -6,6 +6,7 @@ import type { PlantPlacement } from '../src/world/vegetation-field';
 import { makeTile, tileSize } from '../src/world/tiles';
 import type { TileRequest } from '../src/world/tiles';
 import { createPlantGeometry } from '../src/rendering/vegetation-geometry';
+import { createFoliageTexture } from '../src/rendering/foliage-textures';
 import { PLANT_KINDS } from '../src/world/vegetation-field';
 import { QUALITY } from '../src/config';
 
@@ -74,21 +75,57 @@ describe('canonical vegetation placement', () => {
   it('transfers surface masks and plant buffers with the mesh', () => {
     const tile = generateTile(request(5, 0, 0), field);
     expect(tile.surface.length).toBe(tile.colors.length);
+    expect(tile.biomeWeights.length).toBe(tile.colors.length / 3 * 4);
+    for (let i = 0; i < tile.biomeWeights.length; i += 4) {
+      const sum = tile.biomeWeights[i]! + tile.biomeWeights[i + 1]! + tile.biomeWeights[i + 2]! + tile.biomeWeights[i + 3]!;
+      expect(sum).toBeLessThanOrEqual(1.0001);
+      expect(sum).toBeGreaterThanOrEqual(0);
+    }
     expect(tile.surface.every(Number.isFinite)).toBe(true);
     expect(tile.vegetation.buffer).not.toBe(tile.positions.buffer);
   });
 });
 
 describe('vegetation rendering assets', () => {
-  it('builds five finite vertex-colored meshes and fixed quality budgets', () => {
+  it('builds five finite vertex-colored meshes with wind/foliage masks and fixed quality budgets', () => {
     for (const kind of PLANT_KINDS) {
       const geometry = createPlantGeometry(kind);
       expect(geometry.getAttribute('position').count).toBeGreaterThan(0);
       expect(geometry.getAttribute('color').count).toBe(geometry.getAttribute('position').count);
+      expect(geometry.getAttribute('leaf').count).toBe(geometry.getAttribute('position').count);
+      expect(geometry.getAttribute('plantFlex').count).toBe(geometry.getAttribute('position').count);
       expect(Array.from(geometry.getAttribute('position').array).every(Number.isFinite)).toBe(true);
       geometry.dispose();
     }
     expect(QUALITY.low.instanceBudgets.reduce((a, b) => a + b, 0)).toBeLessThan(10000);
     expect(QUALITY.high.instanceBudgets.reduce((a, b) => a + b, 0)).toBeLessThan(40000);
+  });
+});
+
+
+describe('procedural foliage sprays', () => {
+  it('are deterministic, alpha-tested, and non-empty', () => {
+    for (const kind of ['pine', 'aspen', 'shrub'] as const) {
+      const a = createFoliageTexture(kind), b = createFoliageTexture(kind);
+      const data = a.image.data as Uint8Array;
+      expect(data).toEqual(b.image.data);
+      let opaque = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i]! > 107) opaque++;
+      expect(opaque).toBeGreaterThan(200);
+      expect(opaque).toBeLessThan(data.length / 4 * 0.8);
+      a.dispose(); b.dispose();
+    }
+  });
+});
+
+describe('quality-aware plant geometry', () => {
+  it('keeps the low preset cheaper than the full silhouette', () => {
+    for (const kind of ['pine', 'aspen', 'shrub', 'grass'] as const) {
+      const low = createPlantGeometry(kind, 'low');
+      const full = createPlantGeometry(kind, 'full');
+      expect(low.getAttribute('position').count).toBeLessThanOrEqual(full.getAttribute('position').count);
+      expect(low.getAttribute('position').count).toBeGreaterThan(0);
+      low.dispose(); full.dispose();
+    }
   });
 });

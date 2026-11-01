@@ -18,7 +18,7 @@ worker.onmessage = ({ data }: MessageEvent<TileRequest>) => {
       fieldSeed = request.seed;
     }
     const result = generateTile(request, field);
-    worker.postMessage(result, [result.positions.buffer, result.normals.buffer, result.colors.buffer, result.surface.buffer, result.vegetation.buffer, result.indices.buffer]);
+    worker.postMessage(result, [result.positions.buffer, result.normals.buffer, result.colors.buffer, result.surface.buffer, result.biomeWeights.buffer, result.vegetation.buffer, result.indices.buffer]);
   } catch (error) {
     worker.postMessage({ type: 'error', id: request.id, epoch: request.epoch, message: error instanceof Error ? error.message : String(error) }, []);
   }

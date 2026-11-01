@@ -66,12 +66,24 @@ export class BiomeField {
 
   /** Linear-light macro albedo; small-scale texture is added by the renderer. */
   color(x: number, z: number, sample: ClimateSample, out: Float32Array, offset: number): void {
-    const variation = 1 + this.variation.fbm(x * 0.0018, z * 0.0018, 2) * 0.17;
+    const broad = this.variation.fbm(x * 0.0018, z * 0.0018, 3);
+    const patch = this.variation.fbm(x * 0.0065 + 11, z * 0.0065 - 7, 2);
+    const variation = 1 + broad * 0.26 + patch * 0.1;
     const w = sample.weights;
-    let r = (w[0] * 0.145 + w[1] * 0.075 + w[2] * 0.31 + w[3] * 0.225 + w[4] * 0.79) * variation;
-    let g = (w[0] * 0.235 + w[1] * 0.155 + w[2] * 0.255 + w[3] * 0.24 + w[4] * 0.84) * variation;
-    let b = (w[0] * 0.075 + w[1] * 0.08 + w[2] * 0.115 + w[3] * 0.18 + w[4] * 0.89) * variation;
-    const strata = this.variation.noise(x * 0.024, z * 0.009) * 0.028;
+    let r = (w[0] * 0.13 + w[1] * 0.065 + w[2] * 0.33 + w[3] * 0.215 + w[4] * 0.79) * variation;
+    let g = (w[0] * 0.225 + w[1] * 0.14 + w[2] * 0.26 + w[3] * 0.23 + w[4] * 0.84) * variation;
+    let b = (w[0] * 0.065 + w[1] * 0.07 + w[2] * 0.11 + w[3] * 0.17 + w[4] * 0.89) * variation;
+    // Forest floor: duff / needle patches under the canopy, not a flat green sheet.
+    const duff = smoothstep(0.05, 0.55, patch) * w[1] * 0.55;
+    r += (0.16 - r) * duff;
+    g += (0.125 - g) * duff;
+    b += (0.075 - b) * duff;
+    // Steppe: cured grass mottling.
+    const dry = smoothstep(-0.1, 0.5, broad) * w[2] * 0.35;
+    r += (0.38 - r) * dry;
+    g += (0.3 - g) * dry;
+    b += (0.13 - b) * dry;
+    const strata = this.variation.noise(x * 0.024, z * 0.009) * 0.035;
     const rock = sample.rock * (1 - sample.snow);
     r += (0.265 + strata - r) * rock;
     g += (0.275 + strata - g) * rock;

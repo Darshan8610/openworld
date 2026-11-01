@@ -11,12 +11,13 @@ export class SurveyCamera {
   readonly position = new Vector3(0, 450, 0);
   readonly previous = new Vector3(0, 450, 0);
   readonly velocity = new Vector3();
+  readonly home = new Vector3(0, 450, 0);
   yaw = -0.58;
-  pitch = -0.12;
+  pitch = -0.16;
   touring = true;
   speed: number = CONFIG.camera.speed;
   private tourTime = 0;
-  private spawned = false;
+  spawned = false;
   private readonly euler = new Euler(0, 0, 0, 'YXZ');
   private readonly interpolated = new Vector3();
   private readonly direction = new Vector3();
@@ -28,7 +29,7 @@ export class SurveyCamera {
   spawn(): void {
     const ground = this.terrain.heightAt(this.position.x, this.position.z);
     if (ground === undefined) return;
-    this.position.y = ground + 210;
+    this.position.y = ground + 95;
     this.previous.copy(this.position);
     this.origin.update(this.position);
     this.spawned = true;
@@ -63,7 +64,7 @@ export class SurveyCamera {
     if (ground !== undefined) {
       const floor = ground + CONFIG.camera.clearance;
       if (this.position.y < floor) { this.position.y = floor; this.velocity.y = Math.max(0, this.velocity.y); }
-      if (this.touring) this.position.y = damp(this.position.y, ground + 210, 0.45, dt);
+      if (this.touring) this.position.y = damp(this.position.y, ground + 95, 0.45, dt);
     }
     this.origin.update(this.position);
   }
@@ -79,8 +80,8 @@ export class SurveyCamera {
   }
 
   reset(): void {
-    this.position.set(0, 450, 0); this.velocity.set(0, 0, 0);
-    this.yaw = -0.58; this.pitch = -0.12; this.tourTime = 0;
+    this.position.copy(this.home); this.velocity.set(0, 0, 0);
+    this.yaw = -0.58; this.pitch = -0.16; this.tourTime = 0;
     this.spawned = false; this.touring = true;
     this.previous.copy(this.position);
   }

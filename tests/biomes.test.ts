@@ -50,7 +50,7 @@ describe('procedural surface textures', () => {
       const a = createSurfaceTexture(kind), b = createSurfaceTexture(kind);
       const data = a.image.data as Uint8Array, size = a.image.width;
       expect(data).toEqual(b.image.data);
-      expect(size).toBe(128);
+      expect(size).toBe(256);
       expect(a.generateMipmaps).toBe(true);
       for (let i = 0; i < size; i++) {
         const left = (i * size) * 4, right = (i * size + size - 1) * 4;

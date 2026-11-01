@@ -1,14 +1,16 @@
-import { Group, InstancedMesh, InstancedBufferAttribute, MeshStandardNodeMaterial, DynamicDrawUsage, DoubleSide, FrontSide, Object3D, Color, Vector3, Sphere } from 'three/webgpu';
-import { attribute, cameraPosition, distance, float, positionGeometry, positionLocal, smoothstep, uniform, vec3 } from 'three/tsl';
+import { Group, InstancedMesh, InstancedBufferAttribute, MeshStandardNodeMaterial, DynamicDrawUsage, DoubleSide, FrontSide, Object3D, Color, Vector3, Vector2, Sphere } from 'three/webgpu';
+import type { DataTexture } from 'three/webgpu';
+import { attribute, cameraPosition, distance, float, positionLocal, smoothstep, uniform, vec3, mix, texture } from 'three/tsl';
 import { CONFIG, QUALITY } from '../config';
 import type { QualityName } from '../config';
 import type { FloatingOrigin } from '../core/floating-origin';
 import type { TerrainManager } from './terrain-manager';
 import { createPlantGeometry } from '../rendering/vegetation-geometry';
+import { createFoliageTexture } from '../rendering/foliage-textures';
 import { PLANT_KINDS, PLANT_STRIDE, readPlant } from './vegetation-field';
 import type { PlantPlacement } from './vegetation-field';
 import { tileSize, distanceToTile } from './tiles';
-import { smoothstep as cpuSmoothstep } from '../utils/math';
+import { mod } from '../utils/math';
 
 interface Batch {
   mesh: InstancedMesh;
@@ -16,19 +18,24 @@ interface Batch {
   roots: InstancedBufferAttribute;
   meta: InstancedBufferAttribute;
   capacity: number;
+  foliage?: DataTexture;
 }
+interface Candidate { data: Float32Array; index: number; x: number; z: number; d: number }
+
+const FLEXIBILITY = [0.12, 0.16, 0.1, 0.26, 0] as const;
 
 /**
- * Five reusable global instance batches, not one draw call per plant or tile.
- * Workers own placement; this class only packs visible records into bounded GPU
- * buffers. Distance scaling happens in the vertex shader, so range edges do not
- * pop. All matrices are render-local and are rebuilt after an origin shift.
+ * Five reusable global instance batches. Workers own canonical placement; this
+ * class packs the nearest accepted records into bounded GPU buffers. Range fade
+ * and wind run in the vertex shader. Wind phase is derived from canonical world
+ * coordinates modulo the origin wrap, so rebasing never restarts a plant's sway.
  */
 export class VegetationManager {
   readonly group = new Group();
   private batches: Batch[] = [];
   private readonly time = uniform(0);
   private readonly wind = uniform(CONFIG.vegetation.wind as number);
+  private readonly windDirection = uniform(new Vector2(0.82, 0.57));
   private readonly dummy = new Object3D();
   private readonly color = new Color();
   private readonly plant: PlantPlacement = { x: 0, y: 0, z: 0, scale: 1, yaw: 0, kind: 0, brightness: 1, random: 0 };
@@ -51,7 +58,7 @@ export class VegetationManager {
     const preset = QUALITY[this.quality];
     PLANT_KINDS.forEach((kind, index) => {
       const capacity = preset.instanceBudgets[index]!;
-      const geometry = createPlantGeometry(kind);
+      const geometry = createPlantGeometry(kind, this.quality === 'low' ? 'low' : 'full');
       const roots = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3).setUsage(DynamicDrawUsage);
       const meta = new InstancedBufferAttribute(new Float32Array(capacity * 2), 2).setUsage(DynamicDrawUsage);
       geometry.setAttribute('plantRoot', roots);
@@ -59,14 +66,29 @@ export class VegetationManager {
       const radius = uniform(kind === 'grass' ? preset.grassDistance : kind === 'shrub' ? preset.vegetationDistance * 0.65 : preset.vegetationDistance);
       const root = attribute('plantRoot', 'vec3');
       const info = attribute('plantMeta', 'vec2');
-      const fade = float(1).sub(smoothstep(radius.mul(0.8), radius, distance(cameraPosition.xz, root.xz)));
-      const phase = this.time.mul(1.35).add(info.x);
-      const sway = vec3(phase.sin(), 0, phase.mul(0.73).cos()).mul(positionGeometry.y.mul(positionGeometry.y).mul(info.y).mul(this.wind));
+      const leaf = attribute('leaf', 'float');
+      const flex = attribute('plantFlex', 'float');
+      const edgeStart = kind === 'grass' || kind === 'shrub' ? 0.78 : 0.94;
+      const fade = float(1).sub(smoothstep(radius.mul(edgeStart), radius, distance(cameraPosition.xz, root.xz)));
+      const phase = this.time.mul(1.25).add(info.x);
+      const gust = phase.sin().add(phase.mul(2.17).add(info.x.mul(0.6)).sin().mul(0.38));
+      const sway = vec3(this.windDirection.x, 0, this.windDirection.y).mul(gust).mul(flex).mul(info.y).mul(this.wind);
       const material = new MeshStandardNodeMaterial({
-        roughness: 0.92, metalness: 0, vertexColors: true,
-        side: kind === 'grass' || kind === 'shrub' ? DoubleSide : FrontSide,
+        roughness: kind === 'rock' ? 0.88 : 0.9,
+        metalness: 0,
+        vertexColors: true,
+        side: kind === 'grass' || kind === 'shrub' || kind === 'pine' || kind === 'aspen' ? DoubleSide : FrontSide,
       });
-      material.name = `Instanced ${kind} / wind + range fade`;
+      material.name = `Instanced ${kind} / layered foliage + wind`;
+      let foliage: DataTexture | undefined;
+      if (kind === 'pine' || kind === 'aspen' || kind === 'shrub') {
+        foliage = createFoliageTexture(kind);
+        const spray = texture(foliage);
+        material.colorNode = mix(vec3(1), spray.rgb, leaf);
+        material.opacityNode = mix(float(1), spray.a, leaf);
+        material.alphaTest = 0.42;
+        material.alphaToCoverage = true;
+      }
       material.positionNode = root.add(positionLocal.sub(root).mul(fade)).add(sway.mul(fade));
       const mesh = new InstancedMesh(geometry, material, capacity);
       mesh.name = `vegetation:${kind}`;
@@ -76,10 +98,9 @@ export class VegetationManager {
       mesh.instanceColor!.setUsage(DynamicDrawUsage);
       mesh.castShadow = kind === 'pine' || kind === 'aspen' || kind === 'rock';
       mesh.receiveShadow = true;
-      // Individual records are range-limited; the batch bounds cover that window.
       mesh.boundingSphere = new Sphere(new Vector3(), preset.vegetationDistance + CONFIG.origin.rebaseDistance * 2 + 2500);
       this.group.add(mesh);
-      this.batches.push({ mesh, material, roots, meta, capacity });
+      this.batches.push({ mesh, material, roots, meta, capacity, foliage });
     });
   }
 
@@ -102,49 +123,58 @@ export class VegetationManager {
 
   private rebuild(position: Vector3): void {
     const preset = QUALITY[this.quality];
-    const tiles = [...this.terrain.activeTiles].filter((tile) => tile.vegetation.length > 0 && distanceToTile(tile.coord, position.x, position.z) < preset.vegetationDistance);
-    tiles.sort((a, b) => distanceToTile(a.coord, position.x, position.z) - distanceToTile(b.coord, position.x, position.z));
-    this.counts.fill(0);
-    this.truncated = false;
-    for (const tile of tiles) {
+    const candidates: Candidate[][] = [[], [], [], [], []];
+    const maxRange = preset.vegetationDistance;
+    for (const tile of this.terrain.activeTiles) {
+      if (tile.vegetation.length === 0 || distanceToTile(tile.coord, position.x, position.z) > maxRange) continue;
       const size = tileSize(tile.coord.level);
       const worldX = tile.coord.x * size, worldZ = tile.coord.z * size;
       const data = tile.vegetation;
       for (let i = 0; i < data.length / PLANT_STRIDE; i++) {
         const p = readPlant(data, i, this.plant);
         if (p.random > preset.vegetationDensity) continue;
-        const batch = this.batches[p.kind]!;
-        const count = this.counts[p.kind]!;
-        if (count >= batch.capacity) { this.truncated = true; continue; }
         const x = worldX + p.x, z = worldZ + p.z;
         const radius = p.kind === 3 ? preset.grassDistance : p.kind === 2 ? preset.vegetationDistance * 0.65 : preset.vegetationDistance;
         const d = Math.hypot(x - position.x, z - position.z);
         if (d > radius) continue;
-        // A soft population boundary avoids a hard line at the last instance.
-        const edge = 1 - cpuSmoothstep(radius * 0.88, radius, d);
-        const scale = p.scale * edge;
-        if (scale < 0.005) continue;
-        const localX = x - this.origin.absolute.x, localY = p.y - this.origin.absolute.y, localZ = z - this.origin.absolute.z;
-        this.dummy.position.set(localX, localY, localZ);
-        this.dummy.rotation.set(0, p.yaw, 0);
-        this.dummy.scale.setScalar(scale);
-        this.dummy.updateMatrix();
-        batch.mesh.setMatrixAt(count, this.dummy.matrix);
-        this.color.setRGB(p.brightness, p.brightness, p.brightness);
-        batch.mesh.setColorAt(count, this.color);
-        batch.roots.setXYZ(count, localX, localY, localZ);
-        const flexibility = p.kind === 3 ? 0.2 : p.kind === 2 ? 0.06 : p.kind === 4 ? 0 : 0.0025;
-        batch.meta.setXY(count, p.yaw * 4 + localX * 0.015, flexibility * scale);
-        this.counts[p.kind] = count + 1;
+        candidates[p.kind]!.push({ data, index: i, x, z, d });
       }
     }
-    this.batches.forEach((batch, i) => {
-      batch.mesh.count = this.counts[i]!;
+    this.counts.fill(0);
+    this.truncated = false;
+    for (let kind = 0; kind < PLANT_KINDS.length; kind++) {
+      const list = candidates[kind]!;
+      // Nearest plants win a full budget, instead of whichever tile happened to
+      // be visited first. This keeps the foreground stable under streaming.
+      list.sort((a, b) => a.d - b.d);
+      const batch = this.batches[kind]!;
+      const limit = Math.min(list.length, batch.capacity);
+      if (list.length > batch.capacity) this.truncated = true;
+      for (let n = 0; n < limit; n++) {
+        const candidate = list[n]!;
+        const p = readPlant(candidate.data, candidate.index, this.plant);
+        const localX = candidate.x - this.origin.absolute.x;
+        const localY = p.y - this.origin.absolute.y;
+        const localZ = candidate.z - this.origin.absolute.z;
+        this.dummy.position.set(localX, localY, localZ);
+        this.dummy.rotation.set(0, p.yaw, 0);
+        this.dummy.scale.setScalar(p.scale);
+        this.dummy.updateMatrix();
+        batch.mesh.setMatrixAt(n, this.dummy.matrix);
+        this.color.setRGB(p.brightness, p.brightness, p.brightness);
+        batch.mesh.setColorAt(n, this.color);
+        batch.roots.setXYZ(n, localX, localY, localZ);
+        // Origin-invariant phase: origin shifts are multiples of 2048 m.
+        const phase = mod(candidate.x, 1024) * 0.017 + mod(candidate.z, 1024) * 0.013 + p.yaw * 3;
+        batch.meta.setXY(n, phase, FLEXIBILITY[p.kind]! * p.scale);
+        this.counts[kind] = n + 1;
+      }
+      batch.mesh.count = this.counts[kind]!;
       batch.mesh.instanceMatrix.needsUpdate = true;
       batch.mesh.instanceColor!.needsUpdate = true;
       batch.roots.needsUpdate = true;
       batch.meta.needsUpdate = true;
-    });
+    }
   }
 
   setEnabled(enabled: boolean): void {
@@ -183,6 +213,7 @@ export class VegetationManager {
       this.group.remove(batch.mesh);
       batch.mesh.geometry.dispose();
       batch.material.dispose();
+      batch.foliage?.dispose();
       batch.mesh.dispose();
     }
     this.batches = [];
