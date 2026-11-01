@@ -51,11 +51,19 @@ describe('object archetypes', () => {
 
 describe('deterministic world placement', () => {
   it('is stable for a seed and changes with it', () => {
-    const world = queries('placement-seed');
-    const a = planObjectCell(0, 0, { seed: 'placement-seed', queries: world });
-    const b = planObjectCell(0, 0, { seed: 'placement-seed', queries: world });
+    // Aggregate several cells: a single cell can legitimately be empty (a lake,
+    // a cliff or a dense road formation), which must not look like a failure.
+    const cells: [number, number][] = [[0, 0], [1, 0], [-1, 2], [3, -2]];
+    const plan = (seed: string) => {
+      const world = queries(seed);
+      return cells.map(([cx, cz]) => planObjectCell(cx, cz, { seed, queries: world }));
+    };
+    const a = plan('placement-seed');
+    const b = plan('placement-seed');
     expect(a).toEqual(b);
-    const other = planObjectCell(0, 0, { seed: 'other-seed', queries: queries('other-seed') });
+    const total = a.reduce((sum, cell) => sum + cell.length, 0);
+    expect(total).toBeGreaterThan(0);
+    const other = plan('other-seed');
     expect(JSON.stringify(other)).not.toBe(JSON.stringify(a));
   });
 

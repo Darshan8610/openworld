@@ -1,10 +1,10 @@
 # Wayfarer — Infinite Open-World Game
 
-**Phases 1–6 combined: a seeded, infinite world you can walk, inspect and touch.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, streamed terrain physics, a playable animated character, interactive world objects with persistent state, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
+**Phases 1–9 combined: a seeded, infinite world you can walk, swim, inspect and touch.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, streamed terrain physics, a playable animated character, interactive world objects with persistent state, carved lakes and rivers with a shared wave surface and buoyancy, a seeded weather front, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
 
 Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers and Rapier 3D.
 
-> This branch is the merge of the Phase 4 (engine/physics), Phase 5 (playable character) and Phase 6 (objects/interaction) lines. Vehicles, buildings, NPCs, water, audio, missions and the story layer remain later phases — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> This branch carries the Phase 4 (engine/physics), Phase 5 (playable character), Phase 6 (objects/interaction) and Phase 9 (water & environment) lines. Vehicles, buildings, NPCs, audio, missions and the story layer remain later phases — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Quick start
 
@@ -18,8 +18,8 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 181 unit/integration tests across 20 files
-npm run test:browser  # 23 Playwright browser tests (requires Chromium)
+npm test              # 225 unit/integration tests across 27 files
+npm run test:browser  # Playwright browser tests (requires Chromium)
 ```
 
 For browser tests, install Chromium once:
@@ -73,10 +73,23 @@ npx playwright install chromium
 | F3 | Performance overlay |
 | K | Physics collider wireframes (developer) |
 | X | Drop a physics test crate (developer, while using the Rapier sandbox) |
+| J | Toggle the water surface |
+| N | Cycle the weather override (auto → clear → cloudy → rain → storm → fog → snow → blizzard) |
 
-The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, and a shareable world link.
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, wind, surface detail, water surfaces with a live status line, weather selection (auto + ten conditions), cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, and a shareable world link.
 
-Share URLs include `seed`, player position, `hour`, `quality`, `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `postfx=0|1`, `physics=0`, `route=cedar|golden|snowline` and an optional `character=<glb-url>`.
+Share URLs include `seed`, player position, `hour`, `quality`, `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `water=0|1`, `weather=auto|clear|cloudy|overcast|rain|heavy-rain|storm|fog|snow|blizzard|windy`, `postfx=0|1`, `physics=0`, `route=cedar|golden|snowline` and an optional `character=<glb-url>`.
+
+## What Phase 9 adds
+
+- **Real water bodies:** seeded lakes, ponds, reservoirs, wetlands, seas and downhill rivers carved into the same deterministic terrain — one water field answers "is there water here, how deep, which way does it flow" for terrain generation, queries, rendering, physics and placement alike.
+- **A shared wave surface:** the drawn surface evaluates the same three wave trains the physics reads, with depth fading, shoreline foam, fresnel sky mixing, sun glitter, rain pockmarks and an underwater fog response. TSL node material, so WebGPU and WebGL2 run the same graph.
+- **Buoyancy on the fixed step:** props and Rapier bodies float, sink, drag and drift with currents inside the physics substep loops, and survive floating-origin rebases; entering the water reports a splash.
+- **Swimming and diving:** the character swims to neutral buoyancy, is pushed by river currents, and cannot dive through the lake bed.
+- **Weather:** eleven conditions from a seeded advecting front, eased over tens of seconds, driving sun, ambient, clouds, fog, wind, sea state, ground wetness, snow cover and grip; rain turns to snow with altitude and temperature.
+- **Bounded particles:** one pooled system with rain, snow, splash and spray layers, per-particle ground/water collision, and a hard per-preset budget.
+
+See [docs/PHASE9.md](docs/PHASE9.md) for the hydrology model, contracts, measurements and known gaps.
 
 ## What Phase 6 adds
 

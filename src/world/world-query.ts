@@ -2,6 +2,7 @@ import { Vector3 } from 'three/webgpu';
 import type { BiomeId } from './biomes';
 import { createRoadSample } from './road-network';
 import type { RoadNetwork, RoadSample } from './road-network';
+import type { WaterKind } from './water-field';
 
 /**
  * Gameplay-facing surface classes. `world/materials` maps these to physics
@@ -52,6 +53,24 @@ export interface WaterQuery {
   depth: number;
   flowX: number;
   flowZ: number;
+  /** Body class, for shading, audio and effects. */
+  kind?: WaterKind;
+  /** Peak wave amplitude of the body, metres. */
+  waveAmplitude?: number;
+  /** 0 at the shoreline, 1 in the deepest part. */
+  shoreline?: number;
+}
+
+/**
+ * Environmental ground state that is not terrain: weather modifies how a surface
+ * behaves without changing the terrain field. One provider, read by grip,
+ * footsteps, particles and audio.
+ */
+export interface GroundCondition {
+  /** 0 dry, 1 soaked. */
+  wetness: number;
+  /** 0 bare, 1 full snow cover. */
+  snowCover: number;
 }
 
 export interface WorldSample {
@@ -64,6 +83,8 @@ export interface WorldSample {
   surface: SurfaceKind;
   road?: RoadQuery;
   water?: WaterQuery;
+  /** Weather-modified ground state at this position. */
+  condition?: GroundCondition;
 }
 
 export interface TerrainSource {
@@ -82,6 +103,7 @@ export class WorldQuery {
   private readonly terrain: TerrainSource;
   private readonly roads?: RoadNetwork;
   private water?: WaterProvider;
+  private condition?: (x: number, z: number) => GroundCondition;
 
   constructor(terrain: TerrainSource, roads?: RoadNetwork) {
     this.terrain = terrain;
@@ -89,6 +111,18 @@ export class WorldQuery {
   }
 
   registerWater(provider: WaterProvider | undefined): void { this.water = provider; }
+
+  /**
+   * Weather-owned ground state (wetness, snow cover). Registered by the weather
+   * system; queried here so grip, particles and audio share one answer.
+   */
+  registerCondition(provider: ((x: number, z: number) => GroundCondition) | undefined): void {
+    this.condition = provider;
+  }
+
+  conditionAt(x: number, z: number): GroundCondition {
+    return this.condition?.(x, z) ?? { wetness: 0, snowCover: 0 };
+  }
 
   heightAt(x: number, z: number): number | undefined { return this.terrain.heightAt(x, z); }
 
@@ -148,6 +182,8 @@ export class WorldQuery {
     const water = this.water?.(x, z);
     const height = this.terrain.heightAt(x, z);
     if (water && height !== undefined && height < water.surfaceHeight) return 'water';
+    // Weather can bury the surface without touching the terrain field.
+    if (this.conditionAt(x, z).snowCover > 0.45) return 'snow';
     const road = this.roadAt(x, z);
     if (road) return road.onCarriageway ? 'asphalt' : 'gravel';
     const biome = this.biomeAt(x, z);
@@ -174,6 +210,8 @@ export class WorldQuery {
     if (slope !== undefined) result.slope = slope;
     if (road) result.road = road;
     if (water) result.water = water;
+    const condition = this.conditionAt(x, z);
+    if (condition.wetness > 0 || condition.snowCover > 0) result.condition = condition;
     return result;
   }
 }

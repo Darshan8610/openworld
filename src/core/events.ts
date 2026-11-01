@@ -19,6 +19,11 @@ export interface GameEventMap {
   'player:exitedBuilding': { id: string };
   'player:seated': { objectId: string };
   'player:stood': { objectId: string };
+  'world:weatherChanged': { kind: string; label: string; previous: string };
+  'world:waterEntered': { bodyId: string; kind: string; x: number; y: number; z: number };
+  'world:waterExited': { bodyId: string; x: number; y: number; z: number };
+  /** A prop rigid body crossed the waterline (splash already emitted). */
+  'world:propEnteredWater': { id: string; bodyId: string; x: number; y: number; z: number; speed: number };
   'world:originRebased': { x: number; y: number; z: number; shifts: number };
   'world:objectsReset': { seed: string };
   'physics:bodySlept': { id: string };

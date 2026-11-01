@@ -38,6 +38,8 @@ export interface WaterSample {
   /** Surface current in metres per second; rivers and tides supply this later. */
   flowX: number;
   flowZ: number;
+  /** Bed elevation below the swimmer, when the water body reports one (diving). */
+  bedY?: number;
 }
 
 export type WaterQuery = (x: number, z: number) => WaterSample | undefined;
@@ -380,6 +382,12 @@ export class CharacterMotion {
     this.velocity.x *= 1 - clamp(tuning.swimDrag * 0.35 * dt, 0, 0.5);
     this.velocity.z *= 1 - clamp(tuning.swimDrag * 0.35 * dt, 0, 0.5);
     this.position.addScaledVector(this.velocity, dt);
+    // Diving stops at the bed: the water body knows how deep it is, so the
+    // swimmer can never pass through the terrain it was carved from.
+    if (sample.bedY !== undefined && this.position.y < sample.bedY + 0.9) {
+      this.position.y = sample.bedY + 0.9;
+      this.velocity.y = Math.max(0, this.velocity.y);
+    }
     result.speed = Math.hypot(this.velocity.x, this.velocity.z);
   }
 }

@@ -7,6 +7,7 @@ import { clamp } from '../utils/math';
 import { physicalMaterial } from '../physics/surfaces';
 import type { PhysicalMaterial, SurfaceKind } from '../physics/surfaces';
 import type { WorldPoint } from '../core/coordinates';
+import type { WaterSample } from './water-field';
 
 export interface RoadQuery {
   corridor: number;
@@ -103,6 +104,19 @@ export class WorldQueries {
     const road = this.road(x, z);
     const point = this.field.roads.point(road.corridor, road.station);
     return { ...point, corridor: road.corridor, station: road.station, lateral: road.lateral };
+  }
+
+  /**
+   * Water at a canonical position (Phase 9). Objects, vegetation clearance and
+   * placement all ask here instead of probing the hydrology themselves.
+   */
+  water(x: number, z: number, out?: WaterSample): WaterSample | undefined {
+    return this.field.water.sampleAt(x, z, out);
+  }
+
+  /** Water surface elevation (waves excluded) or undefined on dry land. */
+  waterSurface(x: number, z: number): number | undefined {
+    return this.field.water.sampleAt(x, z)?.surfaceY;
   }
 
   /**

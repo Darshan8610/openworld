@@ -3,6 +3,7 @@ import type { QualityName } from '../config';
 import { BIOMES } from '../world/biomes';
 import type { BiomeId } from '../world/biomes';
 import type { InteractionPrompt } from '../interaction/types';
+import type { WeatherKind } from '../environment/weather';
 import { itemDefinition, isItemId } from '../objects/items';
 import type { ItemId } from '../objects/items';
 
@@ -37,6 +38,9 @@ export interface UIActions {
   sensitivity: (value: number) => void;
   shoulder: () => void;
   respawn: () => void;
+  /** Phase 9: water surface streaming and the weather override. */
+  water: (enabled: boolean) => void;
+  weather: (kind: WeatherKind | null) => void;
 }
 export interface UIStats {
   x: number; y: number; z: number; heading: number; time: string; biome: string;
@@ -55,6 +59,13 @@ export interface UIStats {
   rigSource: string; rigJoints: number; rigClips: number;
   objects: number; objectBodies: number; objectSleeping: number;
   inventoryItems: number; interactionTarget: string | null;
+  /** Phase 9: hydrology, weather and particles. */
+  waterEnabled: boolean; waterTiles: number; waterBodies: number; waterTriangles: number;
+  waterBudget: number; underwater: boolean; seaState: number;
+  weatherKind: WeatherKind; weatherLabel: string; weatherPinned: WeatherKind | null;
+  rain: number; snow: number; wetness: number; snowCover: number; windSpeed: number;
+  particles: number; particleCapacity: number;
+  bodiesInWater: number; floatingBodies: number;
 }
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id.replace(/^#/, '')) as T;
 
@@ -106,16 +117,21 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <label class="switch-row" for="lod"><span>Show terrain LOD<small>Color by geometry detail</small></span><input type="checkbox" id="lod" role="switch"></label>
           <label class="switch-row" for="wireframe"><span>Wireframe</span><input type="checkbox" id="wireframe" role="switch"></label>
           <label class="switch-row" for="show-stats"><span>Performance overlay <kbd>F3</kbd></span><input type="checkbox" id="show-stats" role="switch"></label>
+          <div class="nature-heading"><span class="eyebrow">WATER & WEATHER</span><span>PHASE 09</span></div>
+          <label class="switch-row" for="water"><span>Water surfaces <kbd>J</kbd><small id="water-status">Lakes, rivers & seas · buoyancy on</small></span><input type="checkbox" id="water" checked role="switch"></label>
+          <label class="field-label" for="weather-select">Weather<output id="weather-value">Auto</output></label>
+          <select id="weather-select" aria-label="Weather"><option value="auto">Following the front · automatic</option><option value="clear">Clear</option><option value="cloudy">Cloudy</option><option value="overcast">Overcast</option><option value="rain">Rain</option><option value="heavy-rain">Heavy rain</option><option value="storm">Thunderstorm</option><option value="fog">Fog</option><option value="snow">Snow</option><option value="blizzard">Blizzard</option><option value="windy">Windy</option></select>
           <div class="nature-heading"><span class="eyebrow">SIMULATION</span><span>PHASE 04</span></div>
           <label class="switch-row" for="physics"><span>Physics<small id="physics-status">Starting rigid-body engine…</small></span><input type="checkbox" id="physics" checked role="switch"></label>
           <label class="switch-row" for="physics-debug"><span>Collider debug <kbd>K</kbd><small>Physics wireframes · developer view</small></span><input type="checkbox" id="physics-debug" role="switch"></label>
           <div class="panel-buttons"><button id="reset">Reset viewpoint</button><button id="share">Copy world link ↗</button></div>
           <div class="panel-buttons"><button id="drop-crate">Drop test crate <kbd>X</kbd></button></div>
+          <p class="panel-note">Phase 9 adds water: lakes, rivers and seas carved into the same deterministic terrain, a wave surface the renderer and the physics share, buoyancy for props and swimming for the player, a weather front that drifts across the world, and pooled precipitation and splash particles.</p>
           <p class="panel-note">Phase 4 adds the physics engine and streamed terrain colliders, Phase 5 puts you on foot with a third-person camera and ground physics, and Phase 6 adds interactive world objects — caches, containers, gates, lamps, valves, benches and pickups — with hold-to-confirm context actions and persistent state.</p>
         </aside>
         <div class="biome-legend" id="biome-legend" hidden><span class="eyebrow">CLIMATE OVERLAY</span>${BIOMES.map((biome) => `<span><i style="background:#${biome.color.toString(16).padStart(6, '0')}"></i>${biome.name}</span>`).join('')}</div>
         <pre class="performance" id="performance" aria-label="Performance statistics" hidden></pre>
-        <footer class="bottom-hud"><div class="location"><span class="eyebrow"><i></i> <span id="location-name">VALLEY MEADOWS</span></span><div class="coordinates" id="coordinates">E 0.000 <span>/</span> N 0.000</div><div class="location-meta"><span id="altitude">ALT 420 M</span><span>SEED <b id="seed-label"></b></span></div></div>
+        <footer class="bottom-hud"><div class="location"><span class="eyebrow"><i></i> <span id="location-name">VALLEY MEADOWS</span></span><div class="coordinates" id="coordinates">E 0.000 <span>/</span> N 0.000</div><div class="location-meta"><span id="altitude">ALT 420 M</span><span id="weather-chip">CLEAR</span><span>SEED <b id="seed-label"></b></span></div></div>
           <div class="controls-hint" id="controls-hint"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span><span><kbd>Space</kbd> jump</span><span><kbd>⇧</kbd> sprint</span><span><kbd>Ctrl</kbd> crouch</span><span><kbd>Alt</kbd> walk</span><span>Drag to look</span></div>
           <div class="travel"><span class="player-state" id="player-state"><span id="player-mode">ON FOOT</span><i></i><span id="player-stance">STANDING</span></span><button id="tour" aria-pressed="true"><span class="tour-dot"></span><span id="tour-label">Scenic flight</span><span id="tour-state">ON</span></button><div class="clock"><span id="clock">16:24</span><span id="speed">110 M/S CRUISE</span></div></div>
         </footer>
@@ -163,6 +179,11 @@ export class Interface {
     on('vegetation', 'change', () => actions.vegetation($<HTMLInputElement>('#vegetation').checked));
     on('roads', 'change', () => actions.roads($<HTMLInputElement>('#roads').checked));
     on('objects', 'change', () => actions.objects($<HTMLInputElement>('#objects').checked));
+    on('water', 'change', () => actions.water($<HTMLInputElement>('#water').checked));
+    on('weather-select', 'change', () => {
+      const value = $<HTMLSelectElement>('#weather-select').value;
+      actions.weather(value === 'auto' ? null : value as WeatherKind);
+    });
     on('route-select', 'change', () => { const value = $<HTMLSelectElement>('#route-select').value; if (value) { actions.route(value); $<HTMLSelectElement>('#route-select').value = ''; } });
     on('biome-view', 'change', () => { const value = $<HTMLSelectElement>('#biome-view').value; if (value !== '') { actions.viewpoint(Number(value) as BiomeId); $<HTMLSelectElement>('#biome-view').value = ''; } });
     on('wind', 'change', () => actions.wind($<HTMLInputElement>('#wind').checked));
@@ -217,6 +238,16 @@ export class Interface {
       : '<span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly</span><span><kbd>Q</kbd><kbd>E</kbd> altitude</span><span><kbd>⇧</kbd> boost</span><span><kbd>C</kbd> on foot</span><span>Drag to look</span>';
   }
   syncObjects(enabled: boolean): void { $<HTMLInputElement>('#objects').checked = enabled; }
+
+  /** Reflect water streaming and the weather mode in the panel. */
+  syncWater(enabled: boolean, weather: WeatherKind | null): void {
+    $<HTMLInputElement>('#water').checked = enabled;
+    $<HTMLSelectElement>('#weather-select').value = weather ?? 'auto';
+    $('#weather-value').textContent = weather ? weather.replace('-', ' ') : 'Auto';
+    $('#water-status').textContent = enabled
+      ? 'Lakes, rivers & seas · buoyancy on'
+      : 'Surface hidden · physics queries still answer';
+  }
 
   /** Interaction prompt; called at 120 Hz, so it only touches the DOM on change. */
   setPrompt(prompt: InteractionPrompt | null): void {
@@ -274,6 +305,7 @@ export class Interface {
     $('#location-name').textContent = stats.biome.toUpperCase();
     $('#altitude').textContent = `ALT ${Math.round(stats.y).toLocaleString()} M`;
     $('#heading').textContent = `${String(Math.round(stats.heading)).padStart(3, '0')}°`;
+    $('#weather-chip').textContent = stats.weatherLabel.toUpperCase();
     $('#clock').textContent = stats.time;
     $('#speed').textContent = `${Math.round(stats.speed)} M/S ${stats.touring ? 'CRUISE' : 'FLIGHT'}`;
     const onFoot = stats.mode === 'character';
@@ -314,6 +346,11 @@ export class Interface {
       `Objects     ${stats.objects} streamed · ${stats.objectBodies} bodies (${stats.objectSleeping} asleep)`,
       `Inventory   ${stats.inventoryItems} items`,
       `Target      ${stats.interactionTarget ?? '—'}`,
+      `Weather     ${stats.weatherLabel}${stats.weatherPinned ? ' (pinned)' : ''} · rain ${(stats.rain * 100).toFixed(0)}% · snow ${(stats.snow * 100).toFixed(0)}%`,
+      `Wind        ${stats.windSpeed.toFixed(1)} m/s · sea state ${stats.seaState.toFixed(2)}`,
+      `Ground      wetness ${(stats.wetness * 100).toFixed(0)}% · snow cover ${(stats.snowCover * 100).toFixed(0)}%`,
+      `Water       ${stats.waterEnabled ? `${stats.waterTiles} tiles / ${stats.waterBudget} · ${Math.round(stats.waterTriangles).toLocaleString()} tris · ${stats.waterBodies} bodies` : 'off'}${stats.underwater ? ' · UNDERWATER' : ''}`,
+      `Particles   ${stats.particles} / ${stats.particleCapacity} · ${stats.bodiesInWater} bodies in water (${stats.floatingBodies} floating)`,
       `LOD 0–5     ${stats.lod.join(' · ')}`,
     ].join('\n');
   }
