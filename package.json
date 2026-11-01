@@ -1,0 +1,33 @@
+{
+  "name": "wayfarer-infinite-world",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Wayfarer — a seeded, infinite terrain exploration foundation for a browser driving game.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource-variable/dm-sans": "^5.3.0",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "^26.6.6",
+    "@types/three": "0.187.0",
+    "@types/web": "0.0.359",
+    "@webgpu/types": "^0.1.74",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
