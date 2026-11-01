@@ -6,6 +6,19 @@ import type { Inventory } from './inventory';
 import type { ObjectState } from '../objects/archetypes';
 import type { PersistencePolicy } from '../core/entities';
 
+/**
+ * Minimal data identity every interactable exposes.
+ *
+ * Phase 6 defined interaction against world objects; Phase 10 adds vehicles and
+ * later phases add NPCs and buildings. They all need a stable key and a display
+ * label and nothing more, so the interaction layer depends only on this.
+ * `ObjectArchetype` satisfies it structurally — no object code changed.
+ */
+export interface InteractionArchetype {
+  readonly key: string;
+  readonly label: string;
+}
+
 /** The acting entity (survey rig today, the Phase 5 character later). */
 export interface ActorView {
   readonly id: string;

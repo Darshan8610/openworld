@@ -47,6 +47,18 @@ npx playwright install chromium
 | E | Interact / hold to confirm / talk |
 | Mouse wheel | Camera zoom |
 
+**In a vehicle**
+
+| Input | Action |
+|---|---|
+| Q | Enter the nearest vehicle / exit |
+| Y | Cycle camera: chase, hood, cockpit, first person, orbit, cinematic |
+| W / S | Throttle / brake-reverse · nose down / up in aircraft |
+| A / D | Steer · roll in aircraft |
+| Shift / Ctrl | Handbrake · rudder in aircraft · ballast in submarines |
+| R / F | Collective, throttle trim or dive planes |
+| Space | Brake |
+
 **Survey camera (inspection)**
 
 | Input | Action |
@@ -106,6 +118,16 @@ See [docs/PHASE12.md](docs/PHASE12.md) for the audio graph, mixing policy, zones
 - **Persistence:** a versioned, validated, diff-only per-seed NPC slice that refuses newer or unknown formats instead of overwriting them.
 
 See [docs/PHASE8.md](docs/PHASE8.md) for the placement model, navigation and perception contracts, the full state table, budgets and validation.
+
+## What Phase 10 adds
+
+- **26 vehicles across land, air and water:** cars, vans, trucks, buses, motorcycles, bicycles, light aircraft, a jet, a glider, a helicopter, a drone, boats, a jetski, a ferry, a sailboat and a submarine — streamed deterministically onto the Phase 3 road network, into pullouts, along shorelines and across open ground.
+- **A different physical model per category, not one controller with different numbers:** raycast suspension with a Pacejka tyre model, a torque curve, gearbox and differential for road vehicles; a lean and countersteer balance controller for two wheels; angle of attack, lift, stall and control surfaces for aircraft; a tilting rotor disc with collective, cyclic and tail-rotor authority for helicopters; multi-point displacement buoyancy with hull drag, propeller and rudder for boats; apparent wind and a real no-go zone for sailing; ballast and dive planes for submarines.
+- **Enter, drive and leave:** proximity detection through the existing interaction system, seat assignment, control handover, camera transition, exit placement checks, stuck recovery and reset.
+- **Six camera rigs** and a data-only audio hook layer with ten continuous channels (engine, tyres, skid, transmission, suspension, rotor, propeller, wind, water, impact) plus edge-triggered events.
+- **Persistence and floating origin:** a vehicle you drive somewhere and leave is still there when you come back, across world rebasing and across sessions, stored as a diff from the deterministic baseline in its own versioned slice.
+
+See [docs/PHASE10.md](docs/PHASE10.md) for the vehicle architecture, why vehicles run their own integrator rather than Rapier, the per-class force models, and the fourteen physics defects the test suite caught.
 
 ## What Phase 6 adds
 
