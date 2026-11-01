@@ -139,6 +139,8 @@ export class Game {
   private readonly profiler = new FrameProfiler();
   private readonly adaptive = new AdaptiveQualityController();
   private adaptiveEnabled = true;
+  /** Seconds since the last spawn re-anchor attempt (see the render loop). */
+  private spawnRescue = 0;
   private qualityCeiling: QualityName;
   private lastAdaptiveCheck = 0;
   private readonly store = new ObjectStateStore();
@@ -513,9 +515,16 @@ export class Game {
     }
   }
 
-  /** Active camera for rendering, sky and compilation. */
+  /**
+   * Active camera for rendering, sky and compilation. Mirrors
+   * resolveActivePosition()/renderActive(): until the character has actually
+   * spawned, the survey rig owns the view. Composing through the character's
+   * never-solved camera (parked at the local origin) paints an empty frame —
+   * the loading screen would hide it, but a spawn that cannot resolve after
+   * the world is ready would leave a black screen behind a live HUD.
+   */
   private get activeCamera(): PerspectiveCamera {
-    return this.mode === 'character' ? this.character.camera : this.rig.camera;
+    return this.mode === 'character' && this.character.ready ? this.character.camera : this.rig.camera;
   }
 
   /** Canonical world position the streaming systems follow. */
@@ -612,6 +621,18 @@ export class Game {
           if (this.terrain.lastError) this.fail(this.terrain.lastError);
           if (this.loadTime > 90 && !this.compileStarted) this.fail(new Error('Terrain generation timed out. Try the Low graphics preset or reload.'));
         }
+        // Spawn rescue: a queued spawn that cannot resolve (evicted tile, a
+        // restore point the window no longer covers) would leave the character
+        // unsolvable forever. Re-anchor it at the survey rig — whose ground the
+        // loader already proved — so the player always lands in a playable view.
+        if (this.ready && this.mode === 'character' && !this.driving && !this.character.ready) {
+          this.spawnRescue += dt;
+          if (this.spawnRescue >= 5) {
+            this.spawnRescue = 0;
+            this.character.spawnAt(this.rig.position.x, this.rig.position.z);
+            this.ui.toast('Re-anchoring the trailhead…');
+          }
+        } else this.spawnRescue = 0;
         this.renderActive(this.ready ? alpha : 1, dt);
         this.objects.update(dt, focus, this.origin.absolute, alpha);
         this.npcs.update(dt, focus, this.origin.absolute, alpha);
