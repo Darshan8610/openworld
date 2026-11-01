@@ -1,9 +1,9 @@
 {
   "name": "wayfarer-infinite-world",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
-  "description": "Wayfarer \u2014 a seeded, infinite world with biomes, living vegetation, scenic roads and an Ultra graphics preset.",
+  "description": "Wayfarer \u2014 a seeded, infinite open world with biomes, living vegetation, scenic roads, interactive physics objects and an Ultra graphics preset.",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",

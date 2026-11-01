@@ -19,6 +19,26 @@ import { SkySystem } from '../world/sky';
 import { Interface } from '../ui/interface';
 import { normalizeSeed, randomSeed } from '../utils/random';
 import { clamp } from '../utils/math';
+import { GameEventBus } from './events';
+import type { WorldPoint } from './coordinates';
+import { WorldQueries } from '../world/world-queries';
+import { PropPhysicsWorld } from '../physics/prop-physics';
+import type { GroundContact } from '../physics/rigid-body';
+import { Inventory } from '../interaction/inventory';
+import { InteractionManager } from '../interaction/manager';
+import { ObjectSystem } from '../objects/object-system';
+import { ObjectStateStore } from '../persistence/object-store';
+import type { PersistedObjects } from '../persistence/object-store';
+import type { ItemStack } from '../objects/items';
+import { clearObjectGeometryCache } from '../rendering/object-geometry';
+import type { ActorView } from '../interaction/types';
+
+/** Actor state the rig updates every fixed step; structurally an `ActorView`. */
+interface MutableActor extends ActorView {
+  position: WorldPoint;
+  forward: WorldPoint;
+  yaw: number;
+}
 
 /** Composition root: subsystem ownership and lifecycle are explicit. */
 export class Game {
@@ -44,6 +64,31 @@ export class Game {
   private resetVersion = 0;
   private loadTime = 0;
   private readonly localPosition = new Vector3();
+  /** Typed game-event layer shared by objects, interaction, audio and missions. */
+  private readonly events = new GameEventBus();
+  private readonly store = new ObjectStateStore();
+  private inventory!: Inventory;
+  private queries!: WorldQueries;
+  private physics!: PropPhysicsWorld;
+  private interaction!: InteractionManager;
+  private objects!: ObjectSystem;
+  private objectsEnabled = true;
+  private interactPressed = false;
+  private saveDirty = false;
+  private lastSave = 0;
+  private restoreNotice: string | null = null;
+  private readonly actor: MutableActor = {
+    id: 'player', yaw: 0,
+    position: { x: 0, y: 0, z: 0 },
+    forward: { x: 0, y: 0, z: -1 },
+  };
+  private readonly groundSample = (x: number, z: number, out: GroundContact): GroundContact => {
+    const sample = this.queries.groundFast(x, z);
+    out.height = sample.height;
+    out.nx = sample.nx; out.ny = sample.ny; out.nz = sample.nz;
+    out.surface = sample.surface;
+    return out;
+  };
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     this.context = context; this.seed = seed; this.quality = quality;
@@ -56,6 +101,8 @@ export class Game {
     if (new URLSearchParams(location.search).get('roads') === '0') this.roads.setEnabled(false);
     if (new URLSearchParams(location.search).get('vegetation') === '0') this.vegetation.setEnabled(false);
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) this.vegetation.setWind(false);
+    this.buildGameplayLayer(seed);
+    if (new URLSearchParams(location.search).get('objects') === '0') { this.objectsEnabled = false; this.objects.setEnabled(false); }
     this.rig = new SurveyCamera(this.input, this.origin, this.terrain, this.roads);
     this.rig.position.copy(position); this.rig.previous.copy(position); this.rig.home.copy(position);
     this.origin.update(position);
@@ -65,8 +112,16 @@ export class Game {
     const postParam = new URLSearchParams(location.search).get('postfx');
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
-    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group);
-    this.unsubscribeOrigin = this.origin.onChange((delta) => { this.terrain.rebase(delta); this.vegetation.rebase(); this.roads.rebase(delta); });
+    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group);
+    this.unsubscribeOrigin = this.origin.onChange((delta) => {
+      this.terrain.rebase(delta);
+      this.vegetation.rebase();
+      this.roads.rebase(delta);
+      this.objects.rebase(this.origin.absolute);
+      this.events.emit('world:originRebased', {
+        x: this.origin.absolute.x, y: this.origin.absolute.y, z: this.origin.absolute.z, shifts: this.origin.shifts,
+      });
+    });
     this.ui = new Interface(seed, hour, quality, context.backend, {
       seed: (value) => this.changeSeed(normalizeSeed(value)),
       randomSeed: () => this.changeSeed(randomSeed()),
@@ -82,6 +137,7 @@ export class Game {
       biomeDebug: (value) => { this.terrain.setBiomeDebug(value); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); },
       vegetation: (value) => { this.vegetation.setEnabled(value); this.updateURL(); },
       roads: (value) => { this.roads.setEnabled(value); this.updateURL(); },
+      objects: (value) => { this.objectsEnabled = value; this.objects.setEnabled(value); this.updateURL(); },
       route: (value) => this.travelRoute(value),
       wind: (value) => this.vegetation.setWind(value),
       detail: (value) => this.terrain.material.setDetail(value),
@@ -92,11 +148,19 @@ export class Game {
     this.ui.syncTime(hour, this.sky.cycling);
     this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
     this.ui.syncPost(this.post.isEnabled);
+    this.ui.syncObjects(this.objects.objectsEnabled);
+    this.ui.setPack(this.inventory.stacks());
+    this.events.on('inventory:changed', ({ items }) => this.ui.setPack(items));
+    this.events.on('object:stateChanged', () => { this.saveDirty = true; });
+    this.events.on('inventory:changed', () => { this.saveDirty = true; });
+    if (this.restoreNotice) this.ui.toast(this.restoreNotice);
     this.input.onShortcut = (code) => {
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
       if (code === 'KeyH') this.ui.toggleHUD();
       if (code === 'KeyL') { this.terrain.setDebug(!this.terrain.debug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
       if (code === 'KeyB') { this.terrain.setBiomeDebug(!this.terrain.biomeDebug); this.ui.syncDebug(this.terrain.debug, this.terrain.biomeDebug); }
+      if (code === 'KeyE') this.interactPressed = true;
+      if (code === 'KeyO') { this.objectsEnabled = !this.objectsEnabled; this.objects.setEnabled(this.objectsEnabled); this.ui.syncObjects(this.objectsEnabled); this.updateURL(); }
       if (code === 'KeyV') { this.vegetation.setEnabled(!this.vegetation.vegetationEnabled); this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled); this.updateURL(); }
       if (code === 'KeyT') { this.toggleTour(); this.ui.dismissIntro(); }
       if (code === 'KeyG') { if (this.rig.routeFollowing) this.rig.routeFollowing = false; else { const r = this.roads.routeAt(this.rig.position); this.rig.startRoute(r.corridor, r.station); } this.ui.dismissIntro(); this.updateURL(); }
@@ -146,7 +210,10 @@ export class Game {
     if (this.disposed || document.hidden) return;
     try {
       this.loop.tick(timestamp, (dt) => {
-        if (this.ready) this.rig.fixedUpdate(dt);
+        if (!this.ready) return;
+        this.rig.fixedUpdate(dt);
+        this.physics.step(dt, this.groundSample);
+        this.updateInteraction(dt);
       }, (alpha, dt) => {
         this.terrain.update(this.rig.position, dt);
         this.vegetation.update(this.rig.position, dt);
@@ -176,15 +243,19 @@ export class Game {
           if (this.loadTime > 90 && !this.compileStarted) this.fail(new Error('Terrain generation timed out. Try the Low graphics preset or reload.'));
         }
         this.rig.render(this.ready ? alpha : 1);
+        this.objects.update(dt, this.rig.position, this.origin.absolute, alpha);
         this.origin.toLocal(this.rig.position, this.localPosition);
         if (this.ready) this.sky.update(dt, this.localPosition, this.rig.camera);
         const fog = this.scene.fog as Fog;
         fog.color.copy(this.sky.horizon);
         this.context.renderer.info.reset();
         this.post.render(this.scene, this.rig.camera);
+        if (this.saveDirty && this.ready && timestamp - this.lastSave > 4000) this.flushSave(timestamp);
         const stats = this.terrain.stats;
         const vegetation = this.vegetation.stats;
         const roads = this.roads.stats;
+        const objects = this.objects.stats;
+        const physics = this.physics.stats;
         const route = this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null;
         const biome = BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)] ?? BIOMES[0];
         const lod = Array(6).fill(0) as number[];
@@ -205,10 +276,98 @@ export class Game {
           vegetation: vegetation.instances, vegetationBatches: vegetation.batches, vegetationCapacity: vegetation.capacity,
           roadsEnabled: roads.roadsEnabled, roadTiles: roads.roadTiles, props: roads.props, propCapacity: roads.propCapacity,
           routeName: route ? `${route.name} · ${route.number}` : null, routeStation: route ? route.kilometre : null,
+          objects: objects.active, objectBodies: physics.bodies, objectSleeping: physics.sleeping,
+          inventoryItems: this.inventory.total, interactionTarget: this.interaction.targetId,
           progress: this.terrain.wanted ? this.terrain.ready / this.terrain.wanted : 0,
         }, timestamp);
       });
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
+  }
+
+  /**
+   * Build the gameplay layer (world queries, prop physics, inventory,
+   * interaction, streamed objects) for a seed. Rebuilt on seed change so every
+   * system holds queries for exactly one world.
+   */
+  private buildGameplayLayer(seed: string): void {
+    const restored = this.store.load(seed);
+    let saved: PersistedObjects = {};
+    let inventory: readonly ItemStack[] = [];
+    if (restored.status === 'ok') {
+      saved = restored.save.objects;
+      inventory = restored.save.inventory;
+    } else if (restored.status === 'invalid') {
+      console.warn('[Wayfarer] object save ignored:', restored.reason);
+      this.restoreNotice = `Saved world state was ignored: ${restored.reason}`;
+    }
+    this.inventory = new Inventory(this.events);
+    if (inventory.length > 0) this.inventory.restore(inventory);
+    this.queries = new WorldQueries(seed);
+    this.physics = new PropPhysicsWorld({ maxBodies: QUALITY[this.quality].physicsBodies, fixedStep: CONFIG.physics.fixedStep });
+    this.interaction = new InteractionManager({
+      inventory: this.inventory,
+      physics: this.physics,
+      queries: this.queries,
+      events: this.events,
+      notify: (message) => { this.ui?.toast(message); },
+    }, {
+      maxRange: CONFIG.objects.interactionRange,
+      coneRadians: (CONFIG.objects.coneDegrees * Math.PI) / 180,
+      proximityRadius: 2.3,
+    });
+    this.objects = new ObjectSystem({
+      seed,
+      queries: this.queries,
+      physics: this.physics,
+      events: this.events,
+      inventory: this.inventory,
+      interaction: this.interaction,
+      notify: (message) => { this.ui?.toast(message); },
+      budget: QUALITY[this.quality].objectBudget,
+      savedState: saved,
+    });
+    this.objects.setEnabled(this.objectsEnabled);
+  }
+
+  /** Swap the whole gameplay layer when the world seed changes. */
+  private rebuildGameplayLayer(seed: string): void {
+    this.saveDirty = false;
+    this.interaction.clear();
+    this.physics.clear();
+    this.objects.dispose();
+    this.buildGameplayLayer(seed);
+    this.scene.add(this.objects.group);
+    this.ui.syncObjects(this.objects.objectsEnabled);
+    this.ui.setPack(this.inventory.stacks());
+    this.ui.setPrompt(null);
+  }
+
+  /** Fixed-step interaction pass: aim, prompt, hold-to-confirm, dispatch. */
+  private updateInteraction(dt: number): void {
+    const cosPitch = Math.cos(this.rig.pitch);
+    this.actor.position.x = this.rig.position.x;
+    this.actor.position.y = this.rig.position.y;
+    this.actor.position.z = this.rig.position.z;
+    this.actor.forward.x = -Math.sin(this.rig.yaw) * cosPitch;
+    this.actor.forward.y = Math.sin(this.rig.pitch);
+    this.actor.forward.z = -Math.cos(this.rig.yaw) * cosPitch;
+    this.actor.yaw = this.rig.yaw;
+    const pressed = this.interactPressed;
+    this.interactPressed = false;
+    const prompt = this.interaction.update(dt, this.actor, { pressed, down: this.input.down('KeyE') });
+    this.ui.setPrompt(prompt);
+    this.objects.focusTarget(this.interaction.targetId);
+  }
+
+  /** Persist only the object/inventory diff; never overwrite an unknown format. */
+  private flushSave(timestamp = 0): void {
+    if (!this.objects) return;
+    const result = this.store.save(this.seed, this.objects.serializeState(), this.inventory.stacks());
+    this.saveDirty = false;
+    this.lastSave = timestamp;
+    if (result.status === 'ok') return;
+    console.warn('[Wayfarer] object save skipped:', result.reason);
+    if (result.status === 'refused') this.ui?.toast(`Save not written: ${result.reason}`);
   }
 
   private toggleTour(): void {
@@ -232,6 +391,7 @@ export class Game {
     this.vegetation.reset();
     this.roads.reset(seed);
     this.sky.reseed(seed);
+    this.rebuildGameplayLayer(seed);
     const vista = findBiomeViewpoint(seed, 1);
     this.rig.home.set(vista.x, vista.y + 110, vista.z);
     this.rig.reset();
@@ -253,7 +413,15 @@ export class Game {
     this.roads.setQuality(quality);
     this.sky.setQuality(quality);
     this.post.setQuality(quality);
+    this.objects.setQuality(quality);
+    this.physics.setCapacity(QUALITY[quality].physicsBodies);
     this.ui.syncPost(this.post.isEnabled);
+    this.ui.syncObjects(this.objects.objectsEnabled);
+    this.ui.setPack(this.inventory.stacks());
+    this.events.on('inventory:changed', ({ items }) => this.ui.setPack(items));
+    this.events.on('object:stateChanged', () => { this.saveDirty = true; });
+    this.events.on('inventory:changed', () => { this.saveDirty = true; });
+    if (this.restoreNotice) this.ui.toast(this.restoreNotice);
     resizeRenderer(this.context, quality);
     const fog = this.scene.fog as Fog;
     fog.near = QUALITY[quality].viewDistance * 0.36; fog.far = QUALITY[quality].viewDistance;
@@ -269,6 +437,7 @@ export class Game {
     this.rig.startRoute(route.corridor, station);
     this.origin.update(this.rig.position);
     this.vegetation.rebase();
+    this.objects.rebase(this.origin.absolute);
     this.ui.toast(`Route survey · ${route.name}`);
     this.updateURL();
   }
@@ -285,6 +454,7 @@ export class Game {
     this.rig.routeFollowing = false;
     this.origin.update(this.rig.position);
     this.vegetation.rebase();
+    this.objects.rebase(this.origin.absolute);
     this.ui.toast(`Travelling to ${BIOMES[biome].name.toLowerCase()}`);
     this.updateURL();
   }
@@ -298,6 +468,7 @@ export class Game {
     url.searchParams.set('quality', this.quality);
     url.searchParams.set('vegetation', this.vegetation.vegetationEnabled ? '1' : '0');
     url.searchParams.set('roads', this.roads.roadsEnabled ? '1' : '0');
+    url.searchParams.set('objects', this.objectsEnabled ? '1' : '0');
     if (this.rig.routeFollowing) { const route = SCENIC_ROUTES.find((r) => r.corridor === this.rig.routeCorridor); if (route) url.searchParams.set('route', route.id); else url.searchParams.delete('route'); } else url.searchParams.delete('route');
     url.searchParams.set('postfx', this.post.isEnabled ? '1' : '0');
     history.replaceState(null, '', url);
@@ -338,6 +509,11 @@ export class Game {
       biomeDebug: this.terrain.biomeDebug, vegetationEnabled: this.vegetation.vegetationEnabled,
       windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, postfxEnabled: this.post.isEnabled, vegetation: this.vegetation.stats,
       roads: this.roads.stats, routeFollowing: this.rig.routeFollowing, route: this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null,
+      objects: { ...this.objects.stats, list: this.objects.list() },
+      physics: this.physics.stats,
+      inventory: { stacks: this.inventory.stacks(), total: this.inventory.total },
+      interaction: { targetId: this.interaction.targetId, prompt: this.interaction.currentPrompt, providers: this.interaction.providerCount },
+      objectsEnabled: this.objectsEnabled,
       touring: this.rig.touring, speed: this.rig.velocity.length(),
       fps: this.loop.fps, drawCalls: this.context.renderer.info.render.drawCalls,
       gpuBytes: this.context.renderer.info.memory.total };
@@ -348,7 +524,10 @@ export class Game {
     this.disposed = true;
     this.abort.abort(); this.unsubscribeOrigin();
     void this.context.renderer.setAnimationLoop(null);
+    if (this.saveDirty) this.flushSave();
     this.input.dispose(); this.ui.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
+    this.objects.dispose(); this.interaction.clear(); this.physics.clear(); this.events.clear();
+    clearObjectGeometryCache();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }
 }

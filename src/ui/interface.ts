@@ -2,6 +2,9 @@ import type { BackendName } from '../rendering/renderer';
 import type { QualityName } from '../config';
 import { BIOMES } from '../world/biomes';
 import type { BiomeId } from '../world/biomes';
+import type { InteractionPrompt } from '../interaction/types';
+import { itemDefinition, isItemId } from '../objects/items';
+import type { ItemId } from '../objects/items';
 
 export interface UIActions {
   seed: (seed: string) => void;
@@ -18,6 +21,7 @@ export interface UIActions {
   biomeDebug: (enabled: boolean) => void;
   vegetation: (enabled: boolean) => void;
   roads: (enabled: boolean) => void;
+  objects: (enabled: boolean) => void;
   route: (id: string) => void;
   wind: (enabled: boolean) => void;
   detail: (enabled: boolean) => void;
@@ -33,6 +37,8 @@ export interface UIStats {
   vegetation: number; vegetationBatches: number; vegetationCapacity: number;
   roadsEnabled: boolean; roadTiles: number; props: number; propCapacity: number;
   routeName: string | null; routeStation: number | null;
+  objects: number; objectBodies: number; objectSleeping: number;
+  inventoryItems: number; interactionTarget: string | null;
 }
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id.replace(/^#/, '')) as T;
 
@@ -42,6 +48,7 @@ export class Interface {
   private toastTimer = 0;
   private lastUpdate = 0;
   statsVisible = false;
+  private promptKey = '';
   constructor(seed: string, hour: number, quality: QualityName, backend: BackendName, actions: UIActions) {
     $('app').insertAdjacentHTML('beforeend', `
       <div class="shade" aria-hidden="true"></div>
@@ -53,7 +60,7 @@ export class Interface {
         <div class="compass" aria-label="Compass"><span>W</span><i></i><span>N</span><i></i><span>E</span><b id="heading">033°</b></div>
         <section class="intro" id="intro"><div class="eyebrow"><span></span> THE INFINITE WORLD PROJECT</div><h1>Take the
 long way home.</h1><p>No finish line. No edge of the map.
-Just you, and what’s over the next ridge.</p><button class="primary" id="explore">Explore the world <span>↗</span></button><div class="phase-note">PHASE 03 <span>·</span> ROADS THROUGH THE WILD</div></section>
+Just you, and what’s over the next ridge.</p><button class="primary" id="explore">Explore the world <span>↗</span></button><div class="phase-note">PHASE 06 <span>·</span> A WORLD YOU CAN TOUCH</div></section>
         <aside class="settings" id="settings" aria-label="World settings" hidden>
           <div class="panel-heading"><div><span class="eyebrow">MAKE IT YOURS</span><h2>World settings</h2></div><button class="icon-button" id="settings-close" aria-label="Close settings">×</button></div>
           <label class="field-label" for="seed">World seed <span>Same seed. Same world.</span></label>
@@ -71,6 +78,9 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <label class="field-label" for="route-select">Scenic route<span>Camera survey · not driving physics</span></label>
           <select id="route-select" aria-label="Travel to scenic route"><option value="">Choose a route…</option><option value="cedar">Cedar Pass</option><option value="golden">Golden Ridge</option><option value="snowline">Snowline Run</option></select>
           <label class="switch-row" for="roads"><span>Road network <kbd>G</kbd><small>Asphalt, markings, signs & overlooks</small></span><input type="checkbox" id="roads" checked role="switch"></label>
+          <div class="nature-heading"><span class="eyebrow">THINGS TO TOUCH</span><span>PHASE 06</span></div>
+          <label class="switch-row" for="objects"><span>World objects <kbd>O</kbd><small>Caches, lamps, gates, valves & pickups</small></span><input type="checkbox" id="objects" checked role="switch"></label>
+          <div class="pack" id="pack" aria-live="polite"><span class="eyebrow">PACK <b id="pack-count">EMPTY</b></span><ul id="pack-list"></ul></div>
           <label class="switch-row" for="wind"><span>Wind in the canopy<small>Procedural, height-weighted motion</small></span><input type="checkbox" id="wind" checked role="switch"></label>
           <label class="switch-row" for="detail"><span>Terrain surface detail<small>Triplanar grass, rock & snow</small></span><input type="checkbox" id="detail" checked role="switch"></label>
           <label class="switch-row" for="postfx"><span>Cinematic post<small>Bloom, FXAA & vignette (off on Low)</small></span><input type="checkbox" id="postfx" checked role="switch"></label>
@@ -79,15 +89,20 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <label class="switch-row" for="wireframe"><span>Wireframe</span><input type="checkbox" id="wireframe" role="switch"></label>
           <label class="switch-row" for="show-stats"><span>Performance overlay <kbd>F3</kbd></span><input type="checkbox" id="show-stats" role="switch"></label>
           <div class="panel-buttons"><button id="reset">Reset viewpoint</button><button id="share">Copy world link ↗</button></div>
-          <p class="panel-note">Phase 3 adds graded roads, scenic route surveys and roadside props. Drivable vehicles arrive in a later phase.</p>
+          <p class="panel-note">Phase 6 adds interactive world objects: caches, containers, gates, lamps, valves, benches and pickups with hold-to-confirm context actions and persistent state. The walking character arrives in Phase 5; interaction currently targets from the survey rig.</p>
         </aside>
         <div class="biome-legend" id="biome-legend" hidden><span class="eyebrow">CLIMATE OVERLAY</span>${BIOMES.map((biome) => `<span><i style="background:#${biome.color.toString(16).padStart(6, '0')}"></i>${biome.name}</span>`).join('')}</div>
         <pre class="performance" id="performance" aria-label="Performance statistics" hidden></pre>
         <footer class="bottom-hud"><div class="location"><span class="eyebrow"><i></i> <span id="location-name">VALLEY MEADOWS</span></span><div class="coordinates" id="coordinates">E 0.000 <span>/</span> N 0.000</div><div class="location-meta"><span id="altitude">ALT 420 M</span><span>SEED <b id="seed-label"></b></span></div></div>
-          <div class="controls-hint"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly</span><span><kbd>Q</kbd><kbd>E</kbd> altitude</span><span><kbd>⇧</kbd> boost</span><span>Drag to look</span></div>
+          <div class="controls-hint"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly</span><span><kbd>Q</kbd><kbd>E</kbd> altitude</span><span><kbd>⇧</kbd> boost</span><span><kbd>E</kbd> interact</span><span>Drag to look</span></div>
           <div class="travel"><button id="tour" aria-pressed="true"><span class="tour-dot"></span><span id="tour-label">Scenic flight</span><span id="tour-state">ON</span></button><div class="clock"><span id="clock">16:24</span><span id="speed">110 M/S CRUISE</span></div></div>
         </footer>
         <div class="reticle" id="reticle" aria-hidden="true">+</div>
+        <div class="interaction" id="interaction" role="status" aria-live="polite" hidden>
+          <span class="interaction-key" id="interaction-key">E</span>
+          <div class="interaction-copy"><span class="interaction-target" id="interaction-target"></span><span class="interaction-action" id="interaction-action"></span></div>
+          <i class="interaction-progress" id="interaction-progress"></i>
+        </div>
       </main>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
       <div class="loading" id="loading"><div class="loading-brand">WAYFARER</div><div class="loading-line"><span id="loading-progress"></span></div><p id="loading-text">Finding your next horizon…</p><span class="loading-meta">PROCEDURAL TERRAIN · SEEDED & INFINITE</span></div>
@@ -100,7 +115,7 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     const settings = (open: boolean) => { $('#settings').hidden = !open; $('#settings-toggle').setAttribute('aria-expanded', String(open)); document.body.classList.toggle('settings-open', open); };
     on('settings-toggle', 'click', () => settings($('#settings').hasAttribute('hidden')));
     on('settings-close', 'click', () => { settings(false); $<HTMLButtonElement>('#settings-toggle').focus(); });
-    on('explore', 'click', () => { this.dismissIntro(); actions.lock(); this.toast('WASD to fly · Q/E for altitude · Shift to boost · Esc to release mouse'); });
+    on('explore', 'click', () => { this.dismissIntro(); actions.lock(); this.toast('WASD to fly · Q descend to the roadside · E to interact · Shift to boost · Esc to release mouse'); });
     on('seed-form', 'submit', (event) => { event.preventDefault(); actions.seed($<HTMLInputElement>('#seed').value); });
     on('random-seed', 'click', () => actions.randomSeed());
     on('share', 'click', () => actions.share());
@@ -115,6 +130,7 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     on('postfx', 'change', () => actions.postfx($<HTMLInputElement>('#postfx').checked));
     on('vegetation', 'change', () => actions.vegetation($<HTMLInputElement>('#vegetation').checked));
     on('roads', 'change', () => actions.roads($<HTMLInputElement>('#roads').checked));
+    on('objects', 'change', () => actions.objects($<HTMLInputElement>('#objects').checked));
     on('route-select', 'change', () => { const value = $<HTMLSelectElement>('#route-select').value; if (value) { actions.route(value); $<HTMLSelectElement>('#route-select').value = ''; } });
     on('biome-view', 'change', () => { const value = $<HTMLSelectElement>('#biome-view').value; if (value !== '') { actions.viewpoint(Number(value) as BiomeId); $<HTMLSelectElement>('#biome-view').value = ''; } });
     on('wind', 'change', () => actions.wind($<HTMLInputElement>('#wind').checked));
@@ -132,6 +148,37 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     $('#biome-legend').hidden = !biome;
   }
   syncPost(enabled: boolean): void { $<HTMLInputElement>('#postfx').checked = enabled; }
+  syncObjects(enabled: boolean): void { $<HTMLInputElement>('#objects').checked = enabled; }
+
+  /** Interaction prompt; called at 120 Hz, so it only touches the DOM on change. */
+  setPrompt(prompt: InteractionPrompt | null): void {
+    const element = $<HTMLDivElement>('#interaction');
+    if (!prompt) {
+      if (!element.hidden) element.hidden = true;
+      this.promptKey = '';
+      return;
+    }
+    const key = `${prompt.objectId}|${prompt.actionLabel}|${prompt.holdSeconds > 0}`;
+    if (key !== this.promptKey) {
+      this.promptKey = key;
+      element.hidden = false;
+      $('#interaction-key').textContent = prompt.holdSeconds > 0 ? 'HOLD' : prompt.key;
+      $('#interaction-target').textContent = prompt.targetLabel;
+      $('#interaction-action').textContent = prompt.actionLabel;
+    }
+    const progress = $<HTMLElement>('#interaction-progress');
+    progress.style.transform = prompt.holdSeconds > 0 ? `scaleX(${prompt.progress.toFixed(3)})` : 'scaleX(0)';
+  }
+
+  /** Player pack readout; generic items only, no story content. */
+  setPack(stacks: readonly { itemId: string; count: number }[]): void {
+    const known = stacks.filter((stack) => isItemId(stack.itemId));
+    const total = known.reduce((sum, stack) => sum + stack.count, 0);
+    $('#pack-count').textContent = total === 0 ? 'EMPTY' : `${total} ITEM${total === 1 ? '' : 'S'}`;
+    $('#pack-list').innerHTML = known
+      .map((stack) => `<li><span>${itemDefinition(stack.itemId as ItemId).label}</span><b>${stack.count}</b></li>`)
+      .join('');
+  }
   syncNature(vegetation: boolean, wind: boolean, roads = true): void {
     $<HTMLInputElement>('#vegetation').checked = vegetation;
     $<HTMLInputElement>('#wind').checked = wind;
@@ -181,6 +228,9 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
       `Batches     ${stats.vegetationBatches} instanced`,
       `Road tiles  ${stats.roadTiles}`,
       `Props       ${stats.props.toLocaleString()} / ${stats.propCapacity.toLocaleString()} slots`,
+      `Objects     ${stats.objects} streamed · ${stats.objectBodies} bodies (${stats.objectSleeping} asleep)`,
+      `Inventory   ${stats.inventoryItems} items`,
+      `Target      ${stats.interactionTarget ?? '—'}`,
       `LOD 0–5     ${stats.lod.join(' · ')}`,
     ].join('\n');
   }

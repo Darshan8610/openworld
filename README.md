@@ -1,8 +1,8 @@
-# Wayfarer — Infinite Open-World Driving Game
+# Wayfarer — Infinite Open-World Game
 
-**Phase 3: roads through the wild.** A seeded, infinite, chunk-streamed landscape with five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, roadside props, route-following survey travel, and an Ultra graphics preset. Built on the Phase 1 world foundation: Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers, floating origin, dynamic day/night sky, and a free-flight survey camera.
+**Phase 6: a world you can touch.** A seeded, infinite, chunk-streamed landscape with five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, route-following survey travel, an Ultra graphics preset, and now a streamed, physics-backed interactive object layer with context-sensitive interactions, a typed event bus, unified world queries and versioned object persistence. Built on the Phase 1 world foundation: Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers, floating origin, dynamic day/night sky, and a free-flight survey camera.
 
-> Phase 3 adds roads, routes and world props. Drivable vehicles, traffic, missions, physics, weather, audio and full menus remain later phases; the route camera is a survey tool, not a car controller.
+> Phase 6 adds world objects, prop physics, interactions and persistence. The walking character (Phase 5), world physics engine (Phase 4), buildings, NPCs, water, vehicles, missions and audio remain later phases; the route camera is still a survey tool, not a player controller. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Quick start
 
@@ -16,8 +16,8 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 36 unit tests (noise, streaming, origin, terrain, biomes, vegetation, roads, overlooks)
-npm run test:browser  # 11 Playwright browser tests (requires Chromium)
+npm test              # 96 unit tests (world, streaming, biomes, roads, objects, interaction, physics, persistence)
+npm run test:browser  # 14 Playwright browser tests (requires Chromium)
 ```
 
 For browser tests, install Chromium once:
@@ -38,6 +38,8 @@ npx playwright install chromium
 | Mouse wheel | Adjust cruise speed |
 | T | Toggle scenic auto-flight |
 | G | Start/stop the nearest scenic route survey |
+| E | Interact with the object you are looking at (hold for some actions) |
+| O | Toggle interactive world objects |
 | R | Reset viewpoint |
 | P | Pause/resume day cycle |
 | V | Toggle vegetation |
@@ -46,7 +48,17 @@ npx playwright install chromium
 | H | Hide/show HUD |
 | F3 | Performance overlay |
 
-The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), vegetation, roads, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1`, `roads=0|1`, `postfx=0|1` and `route=cedar|golden|snowline` alongside seed, position, hour, quality, and renderer.
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), vegetation, roads, world objects, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, biome/LOD/wireframe debug, the player pack readout, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `postfx=0|1` and `route=cedar|golden|snowline` alongside seed, position, hour, quality, and renderer.
+
+## What Phase 6 adds
+
+- **Interactive world objects:** sixteen data-driven archetypes across nine behaviour kinds — supply crates, ration boxes, medical cases and fuel drums (containers with deterministic contents), tool kits, spare parts, water flasks, lantern cells and survey tags (pickups), trail gates (doors), field lamps, utility switches, service valves, signal levers, benches (seats) and trail signs.
+- **Deterministic placement + streaming:** objects are planned per canonical 512 m cell (roadside caches every 384 m, overlook rest areas, survey posts, utility clusters, wild scatter), streamed nearest-first inside a per-preset budget, and never placed on the carriageway or a steep slope. Authored placements can be merged in by stable world coordinate.
+- **Context interaction:** aim-cone plus touch-range targeting, condition-gated actions, hold-to-confirm progress, cooldowns, an accessible prompt with a progress bar, and a pack readout. All actions publish typed events.
+- **Prop physics:** a fixed 120 Hz box/sphere solver with real units, mass from material density, orientation-aware resting, friction/restitution per surface, body-body contacts, sleeping, raycasts and a hard body budget. Bodies live in canonical coordinates, so a floating-origin rebase never changes momentum.
+- **Unified world queries:** height, normal, slope, biome, road space and physical surface type from one facade, shared by objects, physics and future NPC/vehicle systems.
+- **Persistence slice:** a versioned, strictly validated save envelope that stores only the object/inventory diff, refuses to overwrite newer formats, and sanitises whatever it reads.
+- **Typed event bus:** `object:*`, `interaction:*`, `item:collected`, `inventory:changed`, `player:*`, `world:originRebased`, `physics:*` — the integration point for NPCs, audio and missions.
 
 ## What Phase 3 adds
 
@@ -83,24 +95,30 @@ src/
   world/                  noise, terrain field, biomes, quadtree tiles, worker pool,
                           generator, vegetation field/manager, road network/geometry/manager,
                           viewpoints, sky
+  physics/                physical material table, prop rigid bodies, prop physics world
+  interaction/            targeting, interaction manager, inventory, interaction contracts
+  objects/                archetypes, actions, deterministic placement, streaming object system
+  persistence/            versioned object + inventory save slice
   rendering/              renderer factory, post-processing (GTAO/bloom/FXAA), terrain
-                          and road materials, surface/foliage textures, plant and prop geometry
+                          and road materials, surface/foliage textures, plant, prop and
+                          interactive-object geometry
   ui/                     HUD/settings shell and styles
   workers/                terrain worker entry
   utils/                  seeded RNG and math
 tests/                    unit + browser regression tests
 ```
 
-See [docs/PHASE1.md](docs/PHASE1.md) for the world foundation, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE3.md](docs/PHASE3.md) for roads, routes, props, Ultra graphics and validation.
+See [docs/PHASE1.md](docs/PHASE1.md) for the world foundation, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, [docs/PHASE3.md](docs/PHASE3.md) for roads, routes, props and Ultra graphics, [docs/PHASE6.md](docs/PHASE6.md) for world objects, interaction, prop physics, persistence and validation, and [docs/ROADMAP.md](docs/ROADMAP.md) for the current open-world phase plan and the contracts other phases must build on.
 
 ## Performance notes
 
 - Terrain and vegetation placement run in 2–4 Web Workers depending on preset; the main thread only uploads finished buffers and packs instances.
 - Pixel ratio is capped per preset and by a total-pixel budget to protect 4K/retina displays.
 - Vegetation uses ten instanced draw batches and roadside props use seven more, all with fixed capacities and nearest-first budgeting. Low/Balanced/High/Ultra budgets are documented in [docs/PHASE3.md](docs/PHASE3.md); budget truncation is reported in debug stats. The Low preset also uses reduced-detail plant geometry.
+- Interactive objects stream per 512 m cell with a per-tick planning budget, a per-preset object budget (28/56/88/128) and a prop-body budget (20/40/64/96); object geometry is merged per visual family and cached, materials are per instance and disposed on unload. Physics runs at a fixed 1/120 s with an 8-substep cap and memoised ground sampling.
 - Chunk geometry, materials, instance buffers, and textures are disposed on eviction, seed change, quality change, and teardown.
-- The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, and instanced batch count.
-- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there.
+- The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, instanced batch count, streamed objects, rigid bodies (awake/asleep), inventory total and the current interaction target.
+- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. Phase 6's browser tests could not be executed in the agent sandbox because the Playwright Chromium download is blocked; run `npm run test:browser` locally. See [docs/PHASE6.md](docs/PHASE6.md) for exactly what was and was not executed.
 
 ## Assets and licenses
 
