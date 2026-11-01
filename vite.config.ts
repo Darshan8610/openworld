@@ -11,6 +11,8 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
-    chunkSizeWarningLimit: 1800,
+    // Rapier ships its WASM inlined as base64 (~4.3 MB) and is deliberately
+    // loaded as its own lazily-imported chunk, so the limit is raised for it.
+    chunkSizeWarningLimit: 4600,
   },
 });

@@ -58,5 +58,41 @@ export const CONFIG = {
     starCount: 2600,
     environmentInterval: 8,
   },
-  physics: { fixedStep: 1 / 120, maxSubSteps: 8 },
+  /**
+   * Phase 4 simulation budget. The physics world runs on the same 120 Hz fixed
+   * step as the simulation clock so gameplay never depends on render rate.
+   */
+  physics: {
+    fixedStep: 1 / 120,
+    maxSubSteps: 8,
+    gravity: -9.81,
+    /** Hard caps: the world may not create rigid bodies without bound. */
+    maxBodies: 640,
+    maxColliders: 1280,
+    /** Physics-local frame is rebuilt by translating every body on origin shifts. */
+    collisionSkin: 0.002,
+    /** Streamed terrain ground colliders (heightfields) that follow the player. */
+    ground: {
+      radius: 430,
+      minLevel: 4,
+      maxTiles: 12,
+      updateInterval: 0.25,
+      maxRebuildMsPerFrame: 6,
+    },
+    debugVertexBudget: 120_000,
+    stepBudgetMs: 4,
+  },
+  /**
+   * Entity streaming distances and population caps. Level 0 is full fidelity;
+   * level 3 is data-only and has no visual representation.
+   */
+  entities: {
+    cellSize: 64,
+    fullDistance: 90,
+    reducedDistance: 280,
+    backgroundDistance: 950,
+    maxFull: 24,
+    maxReduced: 72,
+    maxBackground: 320,
+  },
 } as const;
