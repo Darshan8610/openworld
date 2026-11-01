@@ -1,8 +1,8 @@
-# Wayfarer — Infinite Open-World Driving Game
+# Wayfarer — Infinite Open-World Game
 
-**Phase 3: roads through the wild.** A seeded, infinite, chunk-streamed landscape with five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, roadside props, route-following survey travel, and an Ultra graphics preset. Built on the Phase 1 world foundation: Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers, floating origin, dynamic day/night sky, and a free-flight survey camera.
+**Phase 4: the engine underneath the world.** A seeded, infinite, chunk-streamed landscape with five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, roadside props, streamed terrain physics, a world entity model with multilevel simulation streaming, one authoritative world query service and a typed gameplay event bus. Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers, floating origin, dynamic day/night sky, a free-flight survey camera and Rapier 3D.
 
-> Phase 3 adds roads, routes and world props. Drivable vehicles, traffic, missions, physics, weather, audio and full menus remain later phases; the route camera is a survey tool, not a car controller.
+> This is an **engine and world phase**, not a gameplay phase. There is still no playable human character, no NPCs, no buildings, no water and no drivable vehicle: those are Phases 5–10 of [docs/ROADMAP.md](docs/ROADMAP.md). The survey camera remains a world-inspection tool and the physics sandbox (`C`) is a developer utility.
 
 ## Quick start
 
@@ -16,8 +16,8 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 36 unit tests (noise, streaming, origin, terrain, biomes, vegetation, roads, overlooks)
-npm run test:browser  # 11 Playwright browser tests (requires Chromium)
+npm test              # 83 unit/integration tests (world, physics, entities, queries, events)
+npm run test:browser  # 15 Playwright browser specs (requires Chromium)
 ```
 
 For browser tests, install Chromium once:
@@ -45,8 +45,21 @@ npx playwright install chromium
 | L | Toggle LOD debug colors |
 | H | Hide/show HUD |
 | F3 | Performance overlay |
+| K | Physics collider wireframes (developer) |
+| C | Drop a physics test crate (developer) |
 
-The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), vegetation, roads, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1`, `roads=0|1`, `postfx=0|1` and `route=cedar|golden|snowline` alongside seed, position, hour, quality, and renderer.
+The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), vegetation, roads, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, and a shareable world link. Share URLs include `vegetation=0|1`, `roads=0|1`, `postfx=0|1`, `physics=0` and `route=cedar|golden|snowline` alongside seed, position, hour, quality, and renderer.
+
+## What Phase 4 adds
+
+- **Physics engine:** Rapier 3D 0.21 (WASM) in its own lazily imported chunk. Fixed 120 Hz stepping with bounded catch-up, so simulation never depends on frame rate. If the engine cannot load, the world still runs and the UI explains why.
+- **Floating-origin-safe physics:** every body lives in a physics-local frame and is translated on each 2048 m rebase with velocities, orientation and sleep state intact; ray casts and ground probes always speak canonical world coordinates.
+- **Streamed terrain colliders:** each finest visible tile within 430 m becomes a Rapier heightfield built from the same worker grid the renderer draws, capped at 12 tiles with a per-frame build budget. Measured: 12 Ultra tiles in ~3.5 ms, and ~0.02 ms per physics step for the whole ground.
+- **Physical materials:** asphalt, gravel, grass, soil, rock, snow, ice, wood, metal, concrete, glass, rubber, fabric and water with density, friction, restitution and a tyre-grip factor, plus collision layers, sensors and typed collision events.
+- **World entity model:** one record type for every future world object with stable id, bounds, streaming priority, persistence policy, visual/physics/simulation attachments, and four simulation levels (full, reduced ~15 Hz, background, dormant) governed by nearest-first population budgets.
+- **Unified world query:** height, normal, slope, biome, road formation, surface class, nearest road point and a composite sample — one authority instead of per-subsystem answers. Water and weather are explicit extension points, deliberately empty until Phases 9–10.
+- **Typed event bus:** the cross-system layer later phases (missions, dialogue, audio, UI) subscribe to, with bounded history and handler-level error isolation.
+- **Developer tools:** `K` collider wireframes straight from Rapier's debug buffers, `C` a real simulated crate (body + entity + visual), and physics/entity budgets in the `F3` overlay and the settings panel.
 
 ## What Phase 3 adds
 
@@ -77,31 +90,36 @@ The settings panel exposes the world seed, time-of-day slider, day-cycle toggle,
 
 ```text
 src/
-  config.ts               central tuning + vegetation quality budgets
+  config.ts               central tuning, quality presets, physics and entity budgets
   main.ts                 bootstrap
   core/                   game loop, fixed clock, input, floating origin, survey camera
+  game/                   world manager, entity model + registry/streaming, typed event bus
+  physics/                Rapier world wrapper, physical materials, streamed terrain
+                          ground colliders, collider debug renderer
   world/                  noise, terrain field, biomes, quadtree tiles, worker pool,
                           generator, vegetation field/manager, road network/geometry/manager,
-                          viewpoints, sky
+                          viewpoints, sky, unified world query service
   rendering/              renderer factory, post-processing (GTAO/bloom/FXAA), terrain
                           and road materials, surface/foliage textures, plant and prop geometry
   ui/                     HUD/settings shell and styles
   workers/                terrain worker entry
   utils/                  seeded RNG and math
-tests/                    unit + browser regression tests
+tests/                    unit, integration + browser regression tests
 ```
 
-See [docs/PHASE1.md](docs/PHASE1.md) for the world foundation, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE3.md](docs/PHASE3.md) for roads, routes, props, Ultra graphics and validation.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the open-world plan and the Phase 4 contracts later phases must honour, [docs/PHASE4.md](docs/PHASE4.md) for the engine, physics decision, coordinate model and validation, [docs/PHASE3.md](docs/PHASE3.md) for roads/routes/props, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE1.md](docs/PHASE1.md) for the world foundation.
 
 ## Performance notes
 
 - Terrain and vegetation placement run in 2–4 Web Workers depending on preset; the main thread only uploads finished buffers and packs instances.
 - Pixel ratio is capped per preset and by a total-pixel budget to protect 4K/retina displays.
 - Vegetation uses ten instanced draw batches and roadside props use seven more, all with fixed capacities and nearest-first budgeting. Low/Balanced/High/Ultra budgets are documented in [docs/PHASE3.md](docs/PHASE3.md); budget truncation is reported in debug stats. The Low preset also uses reduced-detail plant geometry.
+- Physics runs on a fixed 120 Hz step with a bounded substep count; the ground streamer rebuilds at most four heightfields per update under a 6 ms budget. Rigid bodies are capped (640 bodies / 1280 colliders) and the cap emits an event instead of growing.
+- Entity streaming enforces population budgets per simulation level (24 full / 72 reduced / 320 background) and only ticks reduced-fidelity entities at ~15 Hz.
 - Chunk geometry, materials, instance buffers, and textures are disposed on eviction, seed change, quality change, and teardown.
-- The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, and instanced batch count.
-- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there.
+- The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, instanced batch count, physics bodies/colliders/step time, streamed ground colliders and entity simulation levels.
+- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The Phase 4 browser specs were written against that harness but could not be executed in the newest sandbox (no Chromium download available); `npm run test:browser` must be run before release.
 
 ## Assets and licenses
 
-No paid assets. Terrain, sky, stars, moon, biomes, surface/road textures, vegetation, cliffs, road signs, props and materials are procedural. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+No paid assets. Terrain, sky, stars, moon, biomes, surface/road textures, vegetation, cliffs, road signs, props and materials are procedural. Fonts are self-hosted via Fontsource (SIL OFL). Three.js and its examples are MIT/BSD licensed; Rapier 3D is Apache-2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

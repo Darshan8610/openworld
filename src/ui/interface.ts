@@ -24,6 +24,10 @@ export interface UIActions {
   postfx: (enabled: boolean) => void;
   viewpoint: (biome: BiomeId) => void;
   stats: (enabled: boolean) => void;
+  /** Phase 4: physics simulation, collider debug overlay, sandbox prop. */
+  physics: (enabled: boolean) => void;
+  physicsDebug: (enabled: boolean) => void;
+  dropCrate: () => void;
 }
 export interface UIStats {
   x: number; y: number; z: number; heading: number; time: string; biome: string;
@@ -33,6 +37,10 @@ export interface UIStats {
   vegetation: number; vegetationBatches: number; vegetationCapacity: number;
   roadsEnabled: boolean; roadTiles: number; props: number; propCapacity: number;
   routeName: string | null; routeStation: number | null;
+  physicsEnabled: boolean; physicsBodies: number; physicsColliders: number;
+  physicsStepMs: number; physicsOverBudget: boolean; physicsGroundTiles: number;
+  physicsProps: number;
+  entityFull: number; entityReduced: number; entityBackground: number; entityDormant: number;
 }
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id.replace(/^#/, '')) as T;
 
@@ -78,8 +86,12 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
           <label class="switch-row" for="lod"><span>Show terrain LOD<small>Color by geometry detail</small></span><input type="checkbox" id="lod" role="switch"></label>
           <label class="switch-row" for="wireframe"><span>Wireframe</span><input type="checkbox" id="wireframe" role="switch"></label>
           <label class="switch-row" for="show-stats"><span>Performance overlay <kbd>F3</kbd></span><input type="checkbox" id="show-stats" role="switch"></label>
+          <div class="nature-heading"><span class="eyebrow">SIMULATION</span><span>PHASE 04</span></div>
+          <label class="switch-row" for="physics"><span>Physics<small id="physics-status">Starting rigid-body engine…</small></span><input type="checkbox" id="physics" checked role="switch"></label>
+          <label class="switch-row" for="physics-debug"><span>Collider debug <kbd>K</kbd><small>Physics wireframes · developer view</small></span><input type="checkbox" id="physics-debug" role="switch"></label>
           <div class="panel-buttons"><button id="reset">Reset viewpoint</button><button id="share">Copy world link ↗</button></div>
-          <p class="panel-note">Phase 3 adds graded roads, scenic route surveys and roadside props. Drivable vehicles arrive in a later phase.</p>
+          <div class="panel-buttons"><button id="drop-crate">Drop test crate <kbd>C</kbd></button></div>
+          <p class="panel-note">Phase 4 adds the physics engine, streamed terrain colliders, world entities and typed events. The playable character arrives in Phase 5.</p>
         </aside>
         <div class="biome-legend" id="biome-legend" hidden><span class="eyebrow">CLIMATE OVERLAY</span>${BIOMES.map((biome) => `<span><i style="background:#${biome.color.toString(16).padStart(6, '0')}"></i>${biome.name}</span>`).join('')}</div>
         <pre class="performance" id="performance" aria-label="Performance statistics" hidden></pre>
@@ -120,6 +132,9 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     on('wind', 'change', () => actions.wind($<HTMLInputElement>('#wind').checked));
     on('detail', 'change', () => actions.detail($<HTMLInputElement>('#detail').checked));
     on('show-stats', 'change', () => this.showStats($<HTMLInputElement>('#show-stats').checked));
+    on('physics', 'change', () => actions.physics($<HTMLInputElement>('#physics').checked));
+    on('physics-debug', 'change', () => actions.physicsDebug($<HTMLInputElement>('#physics-debug').checked));
+    on('drop-crate', 'click', () => actions.dropCrate());
     on('retry', 'click', () => location.reload());
     on('compatibility', 'click', () => { const url = new URL(location.href); url.searchParams.set('renderer', 'webgl'); location.href = url.href; });
     window.addEventListener('keydown', (event) => { if (event.code === 'Escape') settings(false); }, { signal: this.abort.signal });
@@ -132,6 +147,19 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
     $('#biome-legend').hidden = !biome;
   }
   syncPost(enabled: boolean): void { $<HTMLInputElement>('#postfx').checked = enabled; }
+  /** Enable or disable the physics controls once the engine resolves. */
+  setPhysicsAvailable(available: boolean): void {
+    $<HTMLInputElement>('#physics').disabled = !available;
+    $<HTMLInputElement>('#physics-debug').disabled = !available;
+    $<HTMLButtonElement>('#drop-crate').disabled = !available;
+    $('#physics-status').textContent = available
+      ? 'Rapier · rigid bodies on streamed terrain'
+      : 'Unavailable in this browser · the world still streams';
+  }
+  syncPhysics(enabled: boolean, debug: boolean): void {
+    $<HTMLInputElement>('#physics').checked = enabled;
+    $<HTMLInputElement>('#physics-debug').checked = debug;
+  }
   syncNature(vegetation: boolean, wind: boolean, roads = true): void {
     $<HTMLInputElement>('#vegetation').checked = vegetation;
     $<HTMLInputElement>('#wind').checked = wind;
@@ -181,6 +209,10 @@ Just you, and what’s over the next ridge.</p><button class="primary" id="explo
       `Batches     ${stats.vegetationBatches} instanced`,
       `Road tiles  ${stats.roadTiles}`,
       `Props       ${stats.props.toLocaleString()} / ${stats.propCapacity.toLocaleString()} slots`,
+      `Physics     ${stats.physicsEnabled ? `${stats.physicsBodies} bodies / ${stats.physicsColliders} colliders · ${stats.physicsStepMs.toFixed(2)} ms${stats.physicsOverBudget ? ' (over budget)' : ''}` : 'off'}`,
+      `Ground      ${stats.physicsGroundTiles} streamed colliders`,
+      `Entities    ${stats.entityFull} full / ${stats.entityReduced} reduced / ${stats.entityBackground} back / ${stats.entityDormant} dormant`,
+      `Test props  ${stats.physicsProps}`,
       `LOD 0–5     ${stats.lod.join(' · ')}`,
     ].join('\n');
   }

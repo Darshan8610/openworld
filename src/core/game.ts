@@ -19,6 +19,11 @@ import { SkySystem } from '../world/sky';
 import { Interface } from '../ui/interface';
 import { normalizeSeed, randomSeed } from '../utils/random';
 import { clamp } from '../utils/math';
+import { EventBus } from '../game/events';
+import { WorldManager } from '../game/world-manager';
+import { PhysicsWorld } from '../physics/physics-world';
+import { PhysicsGroundStreamer } from '../physics/ground-streamer';
+import { PhysicsDebugRenderer } from '../physics/debug-renderer';
 
 /** Composition root: subsystem ownership and lifecycle are explicit. */
 export class Game {
@@ -36,6 +41,12 @@ export class Game {
   private readonly ui: Interface;
   private readonly abort = new AbortController();
   private readonly unsubscribeOrigin: () => void;
+  /** Phase 4 world layer: entities, unified queries, physics, ordered streaming. */
+  private readonly events = new EventBus();
+  private readonly world: WorldManager;
+  private physics?: PhysicsWorld;
+  private physicsDebug?: PhysicsDebugRenderer;
+  private physicsError?: string;
   private quality: QualityName;
   private seed: string;
   private ready = false;
@@ -47,7 +58,7 @@ export class Game {
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     this.context = context; this.seed = seed; this.quality = quality;
-    this.scene.name = 'Wayfarer / Phase 3';
+    this.scene.name = 'Wayfarer / Phase 4';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
     this.terrain = new TerrainManager(this.origin, seed, quality, (error) => this.fail(error));
@@ -66,6 +77,10 @@ export class Game {
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
     this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group);
+    this.world = new WorldManager({
+      origin: this.origin, terrain: this.terrain, vegetation: this.vegetation, roads: this.roads, events: this.events,
+    });
+    this.scene.add(this.world.props);
     this.unsubscribeOrigin = this.origin.onChange((delta) => { this.terrain.rebase(delta); this.vegetation.rebase(); this.roads.rebase(delta); });
     this.ui = new Interface(seed, hour, quality, context.backend, {
       seed: (value) => this.changeSeed(normalizeSeed(value)),
@@ -88,10 +103,14 @@ export class Game {
       postfx: (value) => { this.post.setEnabled(value); this.updateURL(); },
       viewpoint: (value) => this.travelTo(value),
       stats: (value) => this.ui.showStats(value),
+      physics: (value) => { this.world.setEnabled(value); this.updateURL(); },
+      physicsDebug: (value) => { this.physicsDebug?.setVisible(value); },
+      dropCrate: () => this.dropCrate(),
     });
     this.ui.syncTime(hour, this.sky.cycling);
     this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
     this.ui.syncPost(this.post.isEnabled);
+    this.ui.setPhysicsAvailable(false);
     this.input.onShortcut = (code) => {
       if (code === 'F3') this.ui.showStats(!this.ui.statsVisible);
       if (code === 'KeyH') this.ui.toggleHUD();
@@ -100,6 +119,8 @@ export class Game {
       if (code === 'KeyV') { this.vegetation.setEnabled(!this.vegetation.vegetationEnabled); this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled); this.updateURL(); }
       if (code === 'KeyT') { this.toggleTour(); this.ui.dismissIntro(); }
       if (code === 'KeyG') { if (this.rig.routeFollowing) this.rig.routeFollowing = false; else { const r = this.roads.routeAt(this.rig.position); this.rig.startRoute(r.corridor, r.station); } this.ui.dismissIntro(); this.updateURL(); }
+      if (code === 'KeyK') { const debug = this.physicsDebug; if (debug) { debug.setVisible(!debug.visible); this.ui.syncPhysics(this.world.isEnabled, debug.visible); } }
+      if (code === 'KeyC') this.dropCrate();
       if (code === 'KeyR') this.rig.reset();
       if (code === 'KeyP') { this.sky.cycling = !this.sky.cycling; this.ui.syncTime(this.sky.hour, this.sky.cycling); }
     };
@@ -139,7 +160,35 @@ export class Game {
   }
 
   async start(): Promise<void> {
+    // Physics loads in the background: the world must render even if the WASM
+    // engine is unavailable (older browsers, blocked downloads, tight memory).
+    void this.initPhysics();
     await this.context.renderer.setAnimationLoop((timestamp) => this.frame(timestamp));
+  }
+
+  private async initPhysics(): Promise<void> {
+    if (new URLSearchParams(location.search).get('physics') === '0') {
+      this.physicsError = 'disabled by URL';
+      this.events.emit('physics:unavailable', { message: this.physicsError });
+      return;
+    }
+    try {
+      const physics = await PhysicsWorld.create({ origin: this.origin, events: this.events });
+      if (this.disposed) { physics.dispose(); return; }
+      const debug = new PhysicsDebugRenderer(physics);
+      this.scene.add(debug.object);
+      this.physics = physics;
+      this.physicsDebug = debug;
+      this.world.setPhysics(physics, new PhysicsGroundStreamer(physics, this.terrain), debug);
+      this.ui.setPhysicsAvailable(true);
+      this.ui.syncPhysics(this.world.isEnabled, debug.visible);
+    } catch (error) {
+      this.physicsError = error instanceof Error ? error.message : String(error);
+      this.events.emit('physics:unavailable', { message: this.physicsError });
+      console.warn('[Wayfarer physics]', this.physicsError);
+      this.ui.setPhysicsAvailable(false);
+      this.ui.toast('Physics unavailable — the world still streams normally');
+    }
   }
 
   private frame(timestamp: number): void {
@@ -148,9 +197,7 @@ export class Game {
       this.loop.tick(timestamp, (dt) => {
         if (this.ready) this.rig.fixedUpdate(dt);
       }, (alpha, dt) => {
-        this.terrain.update(this.rig.position, dt);
-        this.vegetation.update(this.rig.position, dt);
-        this.roads.update(this.rig.position, dt);
+        this.world.update(dt, this.rig.position);
         if (!this.ready) {
           this.loadTime += dt;
           // Spawn as soon as the local grid exists; keep loading distant roots behind the overlay.
@@ -166,6 +213,8 @@ export class Game {
               if (this.disposed || version !== this.resetVersion) return;
               this.ready = true;
               this.scene.userData.ready = true;
+              this.world.setReady(true);
+              this.events.emit('world:ready', { seed: this.seed, backend: this.context.backend, physics: !!this.physics });
               this.sky.update(0, this.origin.toLocal(this.rig.position, this.localPosition), this.rig.camera, true);
               this.ui.ready(this.context.backend);
               this.loop.reset();
@@ -185,6 +234,7 @@ export class Game {
         const stats = this.terrain.stats;
         const vegetation = this.vegetation.stats;
         const roads = this.roads.stats;
+        const worldStats = this.world.stats;
         const route = this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null;
         const biome = BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)] ?? BIOMES[0];
         const lod = Array(6).fill(0) as number[];
@@ -206,6 +256,15 @@ export class Game {
           roadsEnabled: roads.roadsEnabled, roadTiles: roads.roadTiles, props: roads.props, propCapacity: roads.propCapacity,
           routeName: route ? `${route.name} · ${route.number}` : null, routeStation: route ? route.kilometre : null,
           progress: this.terrain.wanted ? this.terrain.ready / this.terrain.wanted : 0,
+          physicsEnabled: this.world.isEnabled && !!this.physics,
+          physicsBodies: worldStats.physics?.bodies ?? 0,
+          physicsColliders: worldStats.physics?.colliders ?? 0,
+          physicsStepMs: worldStats.physics?.stepMs ?? 0,
+          physicsOverBudget: worldStats.physics?.overBudget ?? false,
+          physicsGroundTiles: worldStats.ground?.tiles ?? 0,
+          entityFull: worldStats.entities.full, entityReduced: worldStats.entities.reduced,
+          entityBackground: worldStats.entities.background, entityDormant: worldStats.entities.dormant,
+          physicsProps: worldStats.props,
         }, timestamp);
       });
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
@@ -217,8 +276,23 @@ export class Game {
     this.updateURL();
   }
 
+  /**
+   * Developer sandbox: spawn a real rigid body in front of the survey camera.
+   * Used to prove terrain physics, contact response and origin rebasing in-app.
+   */
+  private dropCrate(): void {
+    if (!this.physics || !this.world.isReady) { this.ui.toast('Physics is still initialising'); return; }
+    const forward = new Vector3(-Math.sin(this.rig.yaw), 0, -Math.cos(this.rig.yaw));
+    const position = this.rig.position.clone().addScaledVector(forward, 9);
+    const ground = this.world.query.heightAt(position.x, position.z);
+    position.y = (ground ?? this.rig.position.y) + 7;
+    if (!this.world.spawnCrate(position)) { this.ui.toast('Test prop budget reached'); return; }
+    this.ui.toast(`Dropped test crate · ${this.world.sandboxPropCount} active`);
+  }
+
   private beginLoading(): void {
     this.ready = false; this.compileStarted = false; this.loadTime = 0;
+    this.world.setReady(false);
     this.resetVersion++;
     this.scene.userData.ready = false;
     this.input.clear(); this.ui.beginLoading(); this.loop.reset();
@@ -231,6 +305,7 @@ export class Game {
     this.terrain.reset(seed, this.quality);
     this.vegetation.reset();
     this.roads.reset(seed);
+    this.world.reset();
     this.sky.reseed(seed);
     const vista = findBiomeViewpoint(seed, 1);
     this.rig.home.set(vista.x, vista.y + 110, vista.z);
@@ -254,6 +329,7 @@ export class Game {
     this.sky.setQuality(quality);
     this.post.setQuality(quality);
     this.ui.syncPost(this.post.isEnabled);
+    this.ui.setPhysicsAvailable(false);
     resizeRenderer(this.context, quality);
     const fog = this.scene.fog as Fog;
     fog.near = QUALITY[quality].viewDistance * 0.36; fog.far = QUALITY[quality].viewDistance;
@@ -300,6 +376,7 @@ export class Game {
     url.searchParams.set('roads', this.roads.roadsEnabled ? '1' : '0');
     if (this.rig.routeFollowing) { const route = SCENIC_ROUTES.find((r) => r.corridor === this.rig.routeCorridor); if (route) url.searchParams.set('route', route.id); else url.searchParams.delete('route'); } else url.searchParams.delete('route');
     url.searchParams.set('postfx', this.post.isEnabled ? '1' : '0');
+    if (this.world.isEnabled) url.searchParams.delete('physics'); else url.searchParams.set('physics', '0');
     history.replaceState(null, '', url);
   }
 
@@ -337,7 +414,7 @@ export class Game {
       quality: this.quality, biome: BIOMES[this.terrain.biomeAt(this.rig.position.x, this.rig.position.z)]!.name,
       biomeDebug: this.terrain.biomeDebug, vegetationEnabled: this.vegetation.vegetationEnabled,
       windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, postfxEnabled: this.post.isEnabled, vegetation: this.vegetation.stats,
-      roads: this.roads.stats, routeFollowing: this.rig.routeFollowing, route: this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null,
+      roads: this.roads.stats, world: this.world.stats, routeFollowing: this.rig.routeFollowing, route: this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null,
       touring: this.rig.touring, speed: this.rig.velocity.length(),
       fps: this.loop.fps, drawCalls: this.context.renderer.info.render.drawCalls,
       gpuBytes: this.context.renderer.info.memory.total };
@@ -348,7 +425,10 @@ export class Game {
     this.disposed = true;
     this.abort.abort(); this.unsubscribeOrigin();
     void this.context.renderer.setAnimationLoop(null);
-    this.input.dispose(); this.ui.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
+    this.input.dispose(); this.ui.dispose(); this.world.dispose();
+    this.physicsDebug?.dispose();
+    this.physics?.dispose();
+    this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
     this.context.renderer.dispose(); this.context.canvas.remove();
   }
 }
