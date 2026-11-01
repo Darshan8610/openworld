@@ -106,6 +106,14 @@ export class VehicleSystem {
 
   audioFor(id: string): VehicleAudioHooks | undefined { return this.audio.get(id); }
 
+  /** Canonical position of a live vehicle, for audio panning and captions. */
+  positionOf(id: string): { x: number; y: number; z: number } | undefined {
+    const vehicle = this.active.get(id);
+    if (!vehicle) return undefined;
+    const p = vehicle.body.position;
+    return { x: p.x, y: p.y, z: p.z };
+  }
+
   /** Install the Phase 9 water system; boats rest on terrain until then. */
   setWaterProvider(provider: VehicleWaterProvider | undefined): void {
     this.environment.setWaterProvider(provider);

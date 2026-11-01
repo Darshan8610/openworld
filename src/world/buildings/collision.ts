@@ -97,6 +97,21 @@ export class BuildingCollisionIndex {
     }
     return highest;
   }
+  /**
+   * Solid test for character-scale spheres (locomotion `blocked()`).
+   * Walkable tops never block: floors and porches are standing surfaces, not
+   * walls. Bounded by the streamed collider set with a cheap sphere reject.
+   */
+  overlaps(point: Point3, radius: number, ignoreWalkable = true): boolean {
+    for (const box of this.colliders.values()) {
+      if (ignoreWalkable && box.walkable) continue;
+      const reach = Math.hypot(box.half.x, box.half.z) + radius;
+      if (Math.abs(point.x - box.center.x) > reach || Math.abs(point.z - box.center.z) > reach) continue;
+      if (Math.abs(point.y - box.center.y) > box.half.y + radius) continue;
+      if (overlapsSphere(point, radius, box)) return true;
+    }
+    return false;
+  }
   get values(): readonly BuildingCollider[] { return [...this.colliders.values()]; }
   get size(): number { return this.colliders.size; }
   clear(): void { this.colliders.clear(); }

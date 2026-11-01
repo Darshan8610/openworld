@@ -22,6 +22,7 @@ export const SOUND_IDS = [
   'object-door', 'object-container', 'object-switch', 'object-valve', 'object-lamp',
   'item-pickup', 'item-drop',
   'npc-greet', 'npc-reply', 'npc-farewell',
+  'vehicle-impact', 'vehicle-gear', 'vehicle-start', 'vehicle-stop', 'vehicle-splash',
   'ambience-transition',
 ] as const;
 export type SoundId = typeof SOUND_IDS[number];

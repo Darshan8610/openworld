@@ -199,3 +199,58 @@ describe('character system integration', () => {
     expect(snapshot.spawned).toBe(true);
   });
 });
+
+describe('building wiring in the motion sampler', () => {
+  it('blocks locomotion through solid geometry with wall sliding', () => {
+    // A solid plane beyond z = +5: the default camera yaw walks KeyW toward +Z,
+    // so the player must stop at the wall instead of passing through.
+    const origin = new FloatingOrigin();
+    const scene = new Scene();
+    const stub = new StubInput();
+    const solid = new CharacterSystem({
+      scene,
+      terrain: stubTerrain(() => 0),
+      origin,
+      input: stub as unknown as Input,
+      quality: 'low',
+      reducedMotion: true,
+      blocked: (_x, z) => z > 5,
+    });
+    solid.spawnAt(0, 0);
+    tick(solid, stub, 2);
+    tick(solid, stub, 240, ['KeyW']);
+    expect(solid.ready).toBe(true);
+    expect(solid.position.z).toBeLessThan(6);
+    expect(solid.position.z).toBeGreaterThan(4); // it really did walk into the wall
+    expect(Math.abs(solid.position.x)).toBeLessThan(0.6); // no sideways teleport
+    solid.dispose();
+  });
+
+  it('stands on a walkable building support above the terrain', () => {
+    const origin = new FloatingOrigin();
+    const scene = new Scene();
+    const stub = new StubInput();
+    const system = new CharacterSystem({
+      scene,
+      terrain: stubTerrain(() => 0),
+      origin,
+      input: stub as unknown as Input,
+      quality: 'low',
+      reducedMotion: true,
+      supportHeight: () => 0.4, // porch top everywhere, 0.4 m above terrain
+    });
+    system.spawnAt(0, 0);
+    tick(system, stub, 30);
+    expect(system.ready).toBe(true);
+    expect(system.position.y).toBeCloseTo(0.4, 2);
+    system.dispose();
+  });
+
+  it('falls back to terrain-only motion when no providers are supplied', () => {
+    const { system, input } = build(() => 3);
+    system.spawnAt(1, 2);
+    tick(system, input, 30);
+    expect(system.position.y).toBeCloseTo(3, 1);
+    system.dispose();
+  });
+});

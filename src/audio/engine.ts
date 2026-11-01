@@ -63,6 +63,17 @@ export interface AudioContextLike {
   createDynamicsCompressor?(): AudioNodeLike;
 }
 
+/** Continuous vehicle loop channels (Phase 10 telemetry → Phase 12 audio). */
+export type VehicleLoopId = 'engine' | 'tyre' | 'rotor' | 'wind';
+export interface VehicleLoopSignal { readonly gain: number; readonly pitch: number }
+export type VehicleLoopChannels = Partial<Record<VehicleLoopId, VehicleLoopSignal>>;
+const VEHICLE_LOOPS: Readonly<Record<VehicleLoopId, { level: number; baseHz: number; filterHz: number; q: number; filterType: 'lowpass' | 'bandpass' }>> = {
+  engine: { level: 0.42, baseHz: 80, filterHz: 700, q: 1.2, filterType: 'lowpass' },
+  tyre: { level: 0.3, baseHz: 1, filterHz: 1100, q: 0.9, filterType: 'bandpass' },
+  rotor: { level: 0.38, baseHz: 1, filterHz: 460, q: 0.8, filterType: 'lowpass' },
+  wind: { level: 0.2, baseHz: 1, filterHz: 700, q: 0.7, filterType: 'bandpass' },
+};
+
 export interface AudioEngineOptions {
   /** Inject a context (tests); otherwise the engine creates one. */
   readonly context?: AudioContextLike | null;
@@ -76,6 +87,14 @@ export interface AudioEngineOptions {
 interface ActiveVoice {
   readonly sources: SourceNodeLike[];
   readonly nodes: AudioNodeLike[];
+}
+interface VehicleLoopVoice {
+  readonly sources: SourceNodeLike[];
+  readonly nodes: AudioNodeLike[];
+  readonly gain: GainNodeLike;
+  readonly osc?: SourceNodeLike;
+  readonly filter?: FilterNodeLike;
+  readonly noise?: SourceNodeLike;
 }
 
 const ZONE_BEDS: Readonly<Record<AmbienceZone, { filter: BiquadFilterType; frequency: number; q: number; gain: number }>> = {
@@ -92,6 +111,7 @@ export class WebAudioEngine implements AudioEngine {
   private readonly buses = new Map<MixBus, GainNodeLike>();
   private readonly voices = new Map<number, ActiveVoice>();
   private readonly beds = new Map<AmbienceZone, { source: SourceNodeLike; gain: GainNodeLike }>();
+  private readonly vehicleLoops = new Map<VehicleLoopId, VehicleLoopVoice>();
   private readonly noise: AudioBufferLike | null = null;
   private zoneWeights: ZoneWeights = ZERO_WEIGHTS;
   private gains: Record<MixBus, number> = { ambience: 0.7, effects: 0.9, ui: 0.6 };
@@ -241,6 +261,81 @@ export class WebAudioEngine implements AudioEngine {
     this.applyMaster();
   }
 
+  /**
+   * Continuous vehicle channels: one looping voice per channel with live
+   * gain/pitch (engine = sawtooth through a lowpass; tyre/rotor/wind = looping
+   * noise through filters). Voices are created on demand, faded out and
+   * retired when silent, so a parked world costs nothing. Gains arrive 0..1
+   * from `VehicleAudioHooks`; each channel is scaled by its own level.
+   */
+  setVehicleLoops(channels: VehicleLoopChannels): void {
+    if (!this.context || this.closed) return;
+    const now = this.context.currentTime;
+    for (const id of ['engine', 'tyre', 'rotor', 'wind'] as const) {
+      const signal = channels[id];
+      const gain = Math.max(0, Math.min(1, signal?.gain ?? 0));
+      const pitch = Math.max(0.5, Math.min(2, signal?.pitch ?? 1));
+      const profile = VEHICLE_LOOPS[id];
+      let voice = this.vehicleLoops.get(id);
+      if (!voice) {
+        if (gain <= 0.001) continue;
+        voice = this.createVehicleLoop(id);
+        if (!voice) continue;
+        this.vehicleLoops.set(id, voice);
+      }
+      if (gain <= 0.001) {
+        // Fade out and retire so silence costs no nodes.
+        this.vehicleLoops.delete(id);
+        voice.gain.gain.setTargetAtTime(0, now, 0.15);
+        const stopAt = now + 0.7;
+        for (const source of voice.sources) { try { source.stop(stopAt); } catch { /* already stopped */ } }
+        voice.sources[0]!.onended = () => {
+          for (const source of voice.sources) { try { source.disconnect(); } catch { /* already disconnected */ } }
+          for (const node of voice.nodes) { try { node.disconnect(); } catch { /* already disconnected */ } }
+        };
+        continue;
+      }
+      voice.gain.gain.setTargetAtTime(gain * profile.level, now, 0.08);
+      if (voice.osc?.frequency) voice.osc.frequency.setTargetAtTime(profile.baseHz * pitch, now, 0.06);
+      if (voice.filter) voice.filter.frequency.setTargetAtTime(profile.filterHz * pitch, now, 0.06);
+      if (voice.noise?.playbackRate) voice.noise.playbackRate.setTargetAtTime(pitch, now, 0.06);
+    }
+  }
+
+  private createVehicleLoop(id: VehicleLoopId): VehicleLoopVoice | undefined {
+    const context = this.context;
+    const bus = this.buses.get('effects');
+    if (!context || !bus) return undefined;
+    const profile = VEHICLE_LOOPS[id];
+    const gain = context.createGain();
+    gain.gain.value = 0;
+    gain.connect(bus);
+    const nodes: AudioNodeLike[] = [gain];
+    const filter = context.createBiquadFilter();
+    filter.type = profile.filterType;
+    filter.frequency.value = profile.filterHz;
+    filter.Q.value = profile.q;
+    nodes.push(filter);
+    if (id === 'engine') {
+      const osc = context.createOscillator();
+      osc.type = 'sawtooth';
+      if (osc.frequency) osc.frequency.value = profile.baseHz;
+      osc.connect(filter);
+      filter.connect(gain);
+      try { osc.start(); } catch { /* a closed context throws */ }
+      return { sources: [osc], nodes, gain, osc, filter };
+    }
+    if (!this.noise) { try { gain.disconnect(); } catch { /* already disconnected */ } return undefined; }
+    const noise = context.createBufferSource();
+    noise.buffer = this.noise;
+    (noise as unknown as { loop: boolean }).loop = true;
+    if (noise.playbackRate) noise.playbackRate.value = 1;
+    noise.connect(filter);
+    filter.connect(gain);
+    try { noise.start(); } catch { /* a closed context throws */ }
+    return { sources: [noise], nodes, gain, filter, noise };
+  }
+
   setMuted(muted: boolean): void {
     this.muted = muted;
     this.applyMaster();
@@ -287,6 +382,11 @@ export class WebAudioEngine implements AudioEngine {
   dispose(): void {
     if (this.closed) return;
     this.stopAll();
+    for (const voice of this.vehicleLoops.values()) {
+      for (const source of voice.sources) { try { source.stop(); source.disconnect(); } catch { /* already stopped */ } }
+      for (const node of voice.nodes) { try { node.disconnect(); } catch { /* already disconnected */ } }
+    }
+    this.vehicleLoops.clear();
     for (const bed of this.beds.values()) {
       try { bed.source.stop(); bed.source.disconnect(); } catch { /* already stopped */ }
       try { bed.gain.disconnect(); } catch { /* already disconnected */ }

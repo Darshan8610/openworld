@@ -38,21 +38,40 @@ and particles alongside the Phase 12 audio/UI systems.
   NPC/vehicle/building per-seed stores remain intact.
 - NPC/audio and vehicle lifecycle paths were retained together instead of selecting
   one side of overlapping merge blocks. Phase 9 is now integrated with those paths.
-- Phase 9 key collision: the NPC toggle keeps `N`; weather cycling lives on `M`,
-  and both bindings are documented in the pause controls.
+- Phase 9 key collision resolved: the NPC toggle keeps `N`; weather cycling moved
+  to `U` because `M` is the world chart key (both previously fired on one keypress).
 
 ## Known boundaries
 
 This combines existing implementations, not every aspiration in the master roadmap.
-Phase 11 is still the chart/discovery/manual-slot milestone, not completed routing,
-minimap or missions. Manual slots do not yet snapshot NPCs, vehicles or building
-changes. Existing per-seed stores handle those changes separately.
+Phase 11 now includes honest corridor routing, the corner minimap, save v2 with
+autosave and the story-independent mission runtime (see `PHASE11.md`); manual game
+slots still do not snapshot NPCs, vehicles or building changes — the existing
+per-seed stores handle those changes separately, and NPC/vehicle/building
+persistence adapters remain future work.
 
-Buildings retain their survey-inspection collision and door path. Character-to-
-building collision, central Rapier building-collider adapters, building doors in the
-on-foot interaction registry, NPC interior navigation, and audio/vehicle continuous
-sound integration still need dedicated adapters. Do not infer those are finished
-merely because their respective source phases are present in the same tree.
+Three earlier adapter gaps were closed in the post-Phase-12 debug pass:
+
+- **Character ↔ building collision.** `CharacterSampler.blocked()` (already in the
+  motion solver) is now fed by the streamed `BuildingCollisionIndex` at mid-body
+  height; walls stop the player with axis-separated sliding, open doors are
+  passable because the runtime rotates their collider, and walkable tops (porches,
+  interior floors) become step-on supports through the same sampler. The
+  third-person camera also treats streamed building meshes as solids.
+- **Building doors on foot.** Building bindings stream into the on-foot
+  `InteractionManager` through `interaction/building-provider.ts` (throttled
+  registry sync); the runtime still owns state, range, cooldown and occlusion.
+- **Vehicle audio.** Phase 10 `VehicleAudioHooks` (already stepped per vehicle)
+  now drive live `engine.setVehicleLoops` voices (engine/tyre/rotor/wind) and
+  discrete one-shots (impact, gear, start/stop, splash); `vehicle:damaged` pans
+  through the new vehicle position lookup, ambience keeps updating while driving,
+  and five new procedural recipes extend the sound vocabulary.
+
+Still deliberately bounded (not claimed as finished): NPC interior navigation
+(outdoor pathfinding keeps rejecting building lots), Rapier rigid-body building
+colliders for vehicles/props (character locomotion uses the analytic index;
+buildings keep their own physics port for inspection), and hardware-WebGPU /
+long-run browser validation.
 
 ## Verification in this integration session
 

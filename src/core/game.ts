@@ -4,9 +4,11 @@ import type { MapPoint } from '../discovery/discovery';
 import { DiscoveryPanel } from '../ui/discovery-panel';
 import { Minimap } from '../ui/minimap';
 import { ObjectiveRuntime } from '../game/objectives';
+import { buildingInteractionProvider } from '../interaction/building-provider';
+import type { BuildingInteraction } from '../world/buildings/types';
 import { GameSaveStore } from '../persistence/game-save';
 import { Scene, Fog, Vector3 } from 'three/webgpu';
-import type { PerspectiveCamera } from 'three/webgpu';
+import type { PerspectiveCamera, Object3D } from 'three/webgpu';
 import { CONFIG, QUALITY } from '../config';
 import type { QualityName } from '../config';
 import { createRenderer, resizeRenderer } from '../rendering/renderer';
@@ -128,6 +130,9 @@ export class Game {
   private readonly objectives = new ObjectiveRuntime(this.events);
   /** Seconds accumulated toward the silent 120 s autosave (slot 0). */
   private autosaveElapsed = 0;
+  /** On-foot building bindings (doors) currently registered, by interaction id. */
+  private readonly doorProviders = new Map<string, BuildingInteraction>();
+  private doorSyncClock = 0;
   private readonly store = new ObjectStateStore();
   private inventory!: Inventory;
   private queries!: WorldQueries;
@@ -143,6 +148,7 @@ export class Game {
   private wakeTimer = 0;
   private underwater = false;
   private readonly cameraWorld = new Vector3();
+  private readonly listenerDirection = new Vector3();
   private readonly wind = { x: 0, z: 0 };
   private propPhysics!: PropPhysicsWorld;
   private interaction!: InteractionManager;
@@ -217,6 +223,11 @@ export class Game {
     this.origin.update(position);
     // The playable character is the primary view; the survey rig stays parked on
     // the scenic route so switching (C) never loses the route context.
+    // Building wiring: walls block locomotion (with wall sliding), walkable
+    // floors/porches are step-on surfaces, and the third-person camera treats
+    // streamed building meshes as solids. The array is filled after the
+    // BuildingManager below is constructed.
+    const cameraSolids: Object3D[] = [];
     this.character = new CharacterSystem({
       scene: this.scene,
       terrain: this.terrain,
@@ -224,6 +235,9 @@ export class Game {
       input: this.input,
       quality,
       reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      colliders: cameraSolids,
+      blocked: (x, z, feetY) => this.buildings.blockedAt(x, z, feetY),
+      supportHeight: (x, z, baseY) => this.buildings.supportAt(x, z, baseY),
     });
     // Swimming reads the same water surface the renderer draws, waves included.
     this.character.setWater(this.water.swimQuery);
@@ -235,6 +249,7 @@ export class Game {
       seed, quality, origin: this.origin, terrain: this.terrain, storage: buildingStorage,
       onReservationsChanged: () => this.vegetation.invalidateReservations(),
     });
+    cameraSolids.push(this.buildings.group);
     this.vegetation.setReservationQuery((x, z) => this.buildings.field.isAuthoredReserved(x, z));
     this.sky = new SkySystem(context.renderer, this.scene, seed, quality);
     this.sky.setHour(hour);
@@ -991,6 +1006,7 @@ export class Game {
   private rebuildGameplayLayer(seed: string): void {
     this.saveDirty = false;
     this.interaction.clear();
+    this.doorProviders.clear();
     this.propPhysics.clear();
     this.leaveVehicle();
     this.objects.dispose();
@@ -1033,9 +1049,34 @@ export class Game {
     this.actor.yaw = yaw;
     const pressed = this.interactPressed;
     this.interactPressed = false;
+    // Keep the on-foot registry in step with streamed building bindings
+    // (doors). The building runtime enforces range/cooldown itself.
+    this.doorSyncClock += dt;
+    if (this.doorSyncClock >= 0.5) {
+      this.doorSyncClock = 0;
+      this.syncBuildingInteractions();
+    }
     const prompt = this.interaction.update(dt, this.actor, { pressed, down: this.input.down('KeyE') });
     this.ui.setPrompt(prompt);
     this.objects.focusTarget(this.interaction.targetId);
+  }
+
+  /** Register/unregister on-foot providers as buildings stream in and out. */
+  private syncBuildingInteractions(): void {
+    const seen = new Set<string>();
+    for (const binding of this.buildings.interactions()) {
+      seen.add(binding.id);
+      const existing = this.doorProviders.get(binding.id);
+      if (existing === binding) continue; // same runtime instance
+      if (existing) this.interaction.unregister(binding.id); // rebuilt binding: drop stale
+      this.doorProviders.set(binding.id, binding);
+      this.interaction.register(buildingInteractionProvider(binding, (id) => this.buildings.doorOpen(id)));
+    }
+    for (const [id] of this.doorProviders) {
+      if (seen.has(id)) continue;
+      this.doorProviders.delete(id);
+      this.interaction.unregister(id);
+    }
   }
 
   /** Persist only the object/inventory diff; never overwrite an unknown format. */
@@ -1390,16 +1431,16 @@ export class Game {
   private updateAudio(dt: number, focus: Vector3): void {
     if (!this.ready) return;
     this.captionClock += dt;
-    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); return; }
-    const onFoot = this.mode === 'character' && this.character.ready;
+    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); }
+    const onFoot = !this.driving && this.mode === 'character' && this.character.ready;
     const character = this.character.snapshot();
     const frame: AudioFrame = {
       player: { x: focus.x, y: focus.y, z: focus.z },
-      yaw: onFoot ? this.character.cameraRig.yaw : this.rig.yaw,
-      // The survey camera never makes footstep sounds; it has no feet.
+      yaw: this.listenerYaw(),
+      // The survey camera and the driving rig make no footstep sounds.
       speed: onFoot ? character.speed : 0,
       verticalSpeed: onFoot ? character.verticalSpeed : 0,
-      grounded: !onFoot || character.grounded,
+      grounded: this.driving ? true : (!onFoot || character.grounded),
       stance: onFoot ? character.stance : 'stand',
       swimming: onFoot && character.swimming,
       surface: this.queries.surface(focus.x, focus.z),
@@ -1409,13 +1450,72 @@ export class Game {
       windEnabled: this.vegetation.windEnabled,
     };
     this.audioDirector.update(dt, frame);
+    this.updateVehicleLoops();
     this.ui.setCaptions(this.captions.list(this.captionClock));
+  }
+
+  /** Listener yaw: character camera on foot, the active camera while driving. */
+  private listenerYaw(): number {
+    if (this.driving) {
+      this.activeCamera.getWorldDirection(this.listenerDirection);
+      return Math.atan2(-this.listenerDirection.x, -this.listenerDirection.z);
+    }
+    const onFoot = this.mode === 'character' && this.character.ready;
+    return onFoot ? this.character.cameraRig.yaw : this.rig.yaw;
+  }
+
+  /**
+   * Continuous vehicle audio: Phase 10 telemetry hooks (already stepped by the
+   * vehicle system) drive engine/tyre/rotor/wind loops with live gain+pitch,
+   * and their discrete edges become one-shot voices. Silent without a context.
+   */
+  private updateVehicleLoops(): void {
+    const hooks = this.driving ? this.vehicles.audioFor(this.driving.id) : undefined;
+    if (!hooks) {
+      this.audio.setVehicleLoops({});
+      return;
+    }
+    const c = hooks.channels;
+    this.audio.setVehicleLoops({
+      engine: { gain: Math.max(c.engine.gain, c.transmission.gain * 0.5), pitch: c.engine.pitch },
+      tyre: { gain: Math.max(c.tyre.gain, c.skid.gain), pitch: c.tyre.pitch },
+      rotor: { gain: Math.max(c.rotor.gain, c.propeller.gain), pitch: c.rotor.pitch },
+      wind: { gain: Math.max(c.wind.gain, c.water.gain * 0.6), pitch: c.wind.pitch },
+    });
+    // Discrete edges of the driven vehicle (the listener sits inside it: pan 0).
+    for (const event of hooks.drainEvents()) {
+      const intensity = event.intensity;
+      switch (event.kind) {
+        case 'impact':
+          this.audio.play({ sound: 'vehicle-impact', gain: 0.35 + 0.65 * intensity, pan: 0, rate: 1 });
+          break;
+        case 'touchdown':
+          this.audio.play({ sound: 'vehicle-impact', gain: 0.3 * intensity, pan: 0, rate: 1.15 });
+          break;
+        case 'gear-shift':
+          this.audio.play({ sound: 'vehicle-gear', gain: 0.5 * intensity, pan: 0, rate: 1 });
+          break;
+        case 'start':
+          this.audio.play({ sound: 'vehicle-start', gain: 0.8, pan: 0, rate: 1 });
+          break;
+        case 'stop':
+          this.audio.play({ sound: 'vehicle-stop', gain: 0.7, pan: 0, rate: 1 });
+          break;
+        case 'splash':
+          this.audio.play({ sound: 'vehicle-splash', gain: 0.4 + 0.5 * intensity, pan: 0, rate: 1 });
+          break;
+        case 'surface-change':
+          break; // the tyre loop already carries the rolling surface character
+      }
+    }
   }
 
   /** Resolve an event's world id to a position so its sound can be panned. */
   private locateSoundSource(id: string): { x: number; y: number; z: number } | undefined {
     const npc = this.npcs?.list().find((entry) => entry.id === id);
     if (npc) return { x: npc.x, y: npc.y, z: npc.z };
+    const vehicle = this.vehicles?.positionOf(id);
+    if (vehicle) return vehicle;
     const object = this.objects?.list().find((entry) => entry.id === id);
     if (object) return { x: object.x, y: object.y, z: object.z };
     return undefined;
@@ -1490,7 +1590,7 @@ export class Game {
     this.physics?.dispose();
     this.character.dispose(); this.terrain.dispose(); this.vegetation.dispose(); this.roads.dispose(); this.sky.dispose(); this.post.dispose();
     this.audioDirector?.dispose(); this.audio?.dispose();
-    this.vehicles.dispose(); this.npcs.dispose(); this.objects.dispose(); this.interaction.clear(); this.propPhysics.clear(); this.events.clear();
+    this.vehicles.dispose(); this.npcs.dispose(); this.objects.dispose(); this.interaction.clear(); this.doorProviders.clear(); this.propPhysics.clear(); this.events.clear();
     this.water.dispose(); this.particles.dispose();
     clearObjectGeometryCache();
     this.context.renderer.dispose(); this.context.canvas.remove();

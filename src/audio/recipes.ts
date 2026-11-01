@@ -126,6 +126,29 @@ export const RECIPES: Readonly<Record<SoundId, VoiceRecipe>> = {
     NOISE(0.28, 2600, 1.6),
     { source: 'tone', waveform: 'square', frequency: 700, glideTo: 420, gain: 0.07, attack: 0.001, decay: 0.08 },
   ] },
+
+  /* ---- vehicle events: continuous engine/tyre/rotor loops live in
+     engine.setVehicleLoops(); these are the discrete edges only ---------- */
+  'vehicle-impact': { bus: 'effects', duration: 0.42, priority: 7, jitter: 0.07, layers: [
+    { source: 'noise', gain: 0.5, attack: 0.003, decay: 0.38, filter: { type: 'lowpass', frequency: 640, q: 1 } },
+    { source: 'tone', waveform: 'triangle', frequency: 88, glideTo: 44, gain: 0.24, attack: 0.002, decay: 0.32 },
+  ] },
+  'vehicle-gear': { bus: 'effects', duration: 0.1, priority: 4, jitter: 0.05, layers: [
+    NOISE(0.3, 1900, 1.8),
+    { source: 'tone', waveform: 'square', frequency: 520, glideTo: 360, gain: 0.05, attack: 0.001, decay: 0.07 },
+  ] },
+  'vehicle-start': { bus: 'effects', duration: 0.7, priority: 6, jitter: 0.05, layers: [
+    { source: 'noise', gain: 0.3, attack: 0.02, decay: 0.6, filter: { type: 'bandpass', frequency: 420, q: 1.2, sweepTo: 1400 } },
+    { source: 'tone', waveform: 'sawtooth', frequency: 55, glideTo: 150, gain: 0.1, attack: 0.05, decay: 0.55 },
+  ] },
+  'vehicle-stop': { bus: 'effects', duration: 0.5, priority: 5, jitter: 0.05, layers: [
+    { source: 'noise', gain: 0.26, attack: 0.01, decay: 0.45, filter: { type: 'bandpass', frequency: 900, q: 1.1, sweepTo: 300 } },
+    { source: 'tone', waveform: 'sawtooth', frequency: 130, glideTo: 48, gain: 0.1, attack: 0.02, decay: 0.42 },
+  ] },
+  'vehicle-splash': { bus: 'effects', duration: 0.5, priority: 5, jitter: 0.12, layers: [
+    { source: 'noise', gain: 0.45, attack: 0.01, decay: 0.46, filter: { type: 'bandpass', frequency: 1700, q: 0.6, sweepTo: 520 } },
+    { source: 'tone', waveform: 'sine', frequency: 180, glideTo: 90, gain: 0.1, attack: 0.01, decay: 0.3 },
+  ] },
   'object-valve': { bus: 'effects', duration: 0.42, priority: 3, jitter: 0.05, layers: [
     { source: 'noise', gain: 0.24, attack: 0.02, decay: 0.38, filter: { type: 'bandpass', frequency: 1200, q: 2.4, sweepTo: 760 } },
   ] },
@@ -197,6 +220,7 @@ const ARCHETYPE_SOUNDS: Readonly<Record<string, SoundId>> = {
   'utility-switch': 'object-switch',
   'service-valve': 'object-valve',
   'signal-lever': 'object-switch',
+  'building-door': 'object-door',
 };
 
 /** Interaction/action → world sound. `collect` always sounds like a pickup. */
