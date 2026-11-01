@@ -4,7 +4,7 @@
 
 Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers and Rapier 3D.
 
-> This branch is the merge of the Phase 4 (engine/physics), Phase 5 (playable character) and Phase 6 (objects/interaction) lines. Vehicles, buildings, NPCs, water, audio, missions and the story layer remain later phases — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> This branch is the merge of the Phase 4 (engine/physics), Phase 5 (playable character), Phase 6 (objects/interaction) and Phase 10 (vehicles) lines. Buildings, NPCs, water, audio, missions and the story layer remain later phases — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Quick start
 
@@ -18,7 +18,7 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 181 unit/integration tests across 20 files
+npm test              # 273 unit/integration tests across 24 files
 npm run test:browser  # 23 Playwright browser tests (requires Chromium)
 ```
 
@@ -46,6 +46,18 @@ npx playwright install chromium
 | C | Switch to the survey camera |
 | E | Interact / hold to confirm |
 | Mouse wheel | Camera zoom |
+
+**In a vehicle**
+
+| Input | Action |
+|---|---|
+| Q | Enter the nearest vehicle / exit |
+| Y | Cycle camera: chase, hood, cockpit, first person, orbit, cinematic |
+| W / S | Throttle / brake-reverse · nose down / up in aircraft |
+| A / D | Steer · roll in aircraft |
+| Shift / Ctrl | Handbrake · rudder in aircraft · ballast in submarines |
+| R / F | Collective, throttle trim or dive planes |
+| Space | Brake |
 
 **Survey camera (inspection)**
 
@@ -77,6 +89,16 @@ npx playwright install chromium
 The settings panel exposes the world seed, time-of-day slider, day-cycle toggle, graphics preset (Low / Balanced / High / Ultra), player view (on foot / survey camera), first-person camera, look sensitivity, shoulder swap, respawn, vegetation, roads, interactive objects with the player pack readout, wind, surface detail, cinematic post-processing, scenic route travel, biome overlook travel, physics simulation + collider debug, the developer test-crate spawn, biome/LOD/wireframe debug, performance overlay, and a shareable world link.
 
 Share URLs include `seed`, player position, `hour`, `quality`, `mode=character|survey`, `vegetation=0|1`, `roads=0|1`, `objects=0|1`, `postfx=0|1`, `physics=0`, `route=cedar|golden|snowline` and an optional `character=<glb-url>`.
+
+## What Phase 10 adds
+
+- **26 vehicles across land, air and water:** cars, vans, trucks, buses, motorcycles, bicycles, light aircraft, a jet, a glider, a helicopter, a drone, boats, a jetski, a ferry, a sailboat and a submarine — streamed deterministically onto the Phase 3 road network, into pullouts, along shorelines and across open ground.
+- **A different physical model per category, not one controller with different numbers:** raycast suspension with a Pacejka tyre model, a torque curve, gearbox and differential for road vehicles; a lean and countersteer balance controller for two wheels; angle of attack, lift, stall and control surfaces for aircraft; a tilting rotor disc with collective, cyclic and tail-rotor authority for helicopters; multi-point displacement buoyancy with hull drag, propeller and rudder for boats; apparent wind and a real no-go zone for sailing; ballast and dive planes for submarines.
+- **Enter, drive and leave:** proximity detection through the existing interaction system, seat assignment, control handover, camera transition, exit placement checks, stuck recovery and reset.
+- **Six camera rigs** and a data-only audio hook layer with ten continuous channels (engine, tyres, skid, transmission, suspension, rotor, propeller, wind, water, impact) plus edge-triggered events.
+- **Persistence and floating origin:** a vehicle you drive somewhere and leave is still there when you come back, across world rebasing and across sessions, stored as a diff from the deterministic baseline in its own versioned slice.
+
+See [docs/PHASE10.md](docs/PHASE10.md) for the vehicle architecture, why vehicles run their own integrator rather than Rapier, the per-class force models, and the fourteen physics defects the test suite caught.
 
 ## What Phase 6 adds
 
@@ -165,7 +187,7 @@ src/
 tests/                    unit, integration + browser regression tests
 ```
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the open-world plan and the Phase 4/6 contracts later phases must honour, [docs/PHASE6.md](docs/PHASE6.md) for interactive objects and persistence, [docs/PHASE5.md](docs/PHASE5.md) for the playable character, [docs/PHASE4.md](docs/PHASE4.md) for the engine and physics, [docs/PHASE3.md](docs/PHASE3.md) for roads/routes/props, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE1.md](docs/PHASE1.md) for the world foundation.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the open-world plan and the Phase 4/6 contracts later phases must honour, [docs/PHASE10.md](docs/PHASE10.md) for vehicles, [docs/PHASE6.md](docs/PHASE6.md) for interactive objects and persistence, [docs/PHASE5.md](docs/PHASE5.md) for the playable character, [docs/PHASE4.md](docs/PHASE4.md) for the engine and physics, [docs/PHASE3.md](docs/PHASE3.md) for roads/routes/props, [docs/PHASE2.md](docs/PHASE2.md) for biomes/surfaces/vegetation, and [docs/PHASE1.md](docs/PHASE1.md) for the world foundation.
 
 ## Merge notes
 
@@ -188,7 +210,7 @@ The three phase lines were developed against the same Phase 3 base, so this bran
 - Interactive objects stream in canonical 512 m cells with per-preset budgets (28/56/88/128) and prop body caps (20/40/64/96); prop bodies sleep when settled.
 - Chunk geometry, materials, instance buffers, textures and object geometry caches are disposed on eviction, seed change, quality change, and teardown.
 - The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, instanced batch count, physics bodies/colliders/step time, streamed ground colliders, entity simulation levels, object counts, prop bodies and the interaction target.
-- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The merged branch was verified with `tsc --noEmit`, `npm run build` and 181 unit/integration tests; run `npm run test:browser` on a machine with Chromium for the end-to-end pass.
+- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The merged branch was verified with `tsc --noEmit`, `npm run build` and 273 unit/integration tests; run `npm run test:browser` on a machine with Chromium for the end-to-end pass.
 
 ## Assets and licenses
 

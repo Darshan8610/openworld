@@ -243,14 +243,32 @@ describe('motorcycle', () => {
     expect(Math.abs(bike.body.roll)).toBeLessThan(0.35);
   });
 
-  it('leans into a turn rather than staying level', () => {
-    const env = makeEnv();
-    const bike = spawn('motorcycle', 0.8);
-    simulate(bike, env, 2);
-    bike.controls.throttle = 0.7;
-    simulate(bike, env, 4);
-    bike.controls.steer = 1;
-    simulate(bike, env, 3);
-    expect(Math.abs(bike.body.roll)).toBeGreaterThan(0.08);
+  it('leans into a turn rather than staying level, and leans the other way for the other way', () => {
+    // Peak lean through the turn, not the lean at one chosen instant: full
+    // lock at speed eventually spits the rear out and the bike pirouettes,
+    // and a late sample reads the aftermath of that rather than the corner.
+    const peakLean = (steer: number): number => {
+      const env = makeEnv();
+      const bike = spawn('motorcycle', 0.8);
+      simulate(bike, env, 2);
+      bike.controls.throttle = 0.7;
+      simulate(bike, env, 4);
+      expect(Math.abs(bike.body.roll)).toBeLessThan(0.05); // upright beforehand
+      bike.controls.steer = steer;
+      let peak = 0;
+      for (let i = 0; i < 24; i++) {
+        simulate(bike, env, 0.125);
+        if (Math.abs(bike.body.roll) > Math.abs(peak)) peak = bike.body.roll;
+      }
+      return peak;
+    };
+
+    const left = peakLean(-1);
+    const right = peakLean(1);
+    // A real bike banks hard to corner; a narrow car would stay flat.
+    expect(Math.abs(left)).toBeGreaterThan(0.25);
+    expect(Math.abs(right)).toBeGreaterThan(0.25);
+    // And it banks *into* the turn, so reversing the bars reverses the lean.
+    expect(Math.sign(left)).toBe(-Math.sign(right));
   });
 });

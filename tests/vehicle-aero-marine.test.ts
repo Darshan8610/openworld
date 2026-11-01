@@ -180,12 +180,23 @@ describe('helicopter', () => {
 
     // Lower the lever: it must arrest the climb and come back down. The climb
     // momentum takes a few seconds to wash off, which is the correct feel.
+    //
+    // Sample the whole descent rather than the vertical speed at one chosen
+    // instant: by then the aircraft may already be back on its skids, where
+    // vertical speed is legitimately ~0 and a single reading looks like a
+    // failure to descend. Leaving the peak and reaching the ground is the
+    // stronger claim anyway.
     heli.controls.collective = 0.1;
-    simulate(heli, env, 16);
-    expect(heli.telemetry.verticalSpeed).toBeLessThan(0);
-    const peak = Math.max(top, heli.body.position.y);
-    simulate(heli, env, 8);
-    expect(heli.body.position.y).toBeLessThan(peak);
+    let peak = top;
+    let maxDescent = 0;
+    for (let i = 0; i < 32; i++) {
+      simulate(heli, env, 1);
+      peak = Math.max(peak, heli.body.position.y);
+      maxDescent = Math.min(maxDescent, heli.telemetry.verticalSpeed);
+    }
+    expect(maxDescent).toBeLessThan(-1);
+    expect(heli.body.position.y).toBeLessThan(peak - 10);
+    expect(heli.body.position.y).toBeLessThan(5);
   });
 
   it('yaws on the pedals against rotor torque', () => {

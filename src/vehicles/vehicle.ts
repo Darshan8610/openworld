@@ -93,7 +93,7 @@ export class Vehicle implements InteractionProvider {
     yaw = 0,
   ) {
     const { width, height, length } = spec.dimensions;
-    this.body = new VehicleBody(spec.mass, boxInertia(spec.mass, width, height, length, spec.inertiaScale));
+    this.body = new VehicleBody(spec.mass, boxInertia(spec.mass, width, height, length, spec.inertiaScale), spec.centreOfMass);
     this.body.place(position.x, position.y, position.z, yaw);
     this.spawnPosition.set(position.x, position.y, position.z);
     this.spawnYaw = yaw;

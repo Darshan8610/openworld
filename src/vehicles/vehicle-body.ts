@@ -77,11 +77,24 @@ export class VehicleBody {
   private readonly scratchB = new Vector3();
   private readonly scratchQ = new Quaternion();
   private readonly basis = new Matrix3();
+  /** Centre of mass relative to the geometric centre, body-local metres. */
+  private readonly comOffset = new Vector3();
 
-  constructor(mass: number, inertia: BodyInertia) {
+  /**
+   * `comOffset` is where the centre of mass sits relative to the body's
+   * geometric centre, in body-local metres. The integrator must rotate about
+   * the centre of mass, so `position` *is* the centre of mass — but every
+   * authored attachment point (wheels, seats, buoyancy samples, the rotor hub)
+   * is naturally expressed against the geometric centre, which is where a
+   * modeller puts the origin. `localPoint` bridges the two, so a low or
+   * rearward centre of mass changes every lever arm in the vehicle at once:
+   * roll resistance, pitch under braking, buoyancy trim and seat height.
+   */
+  constructor(mass: number, inertia: BodyInertia, comOffset?: WorldPoint) {
     this.mass = Math.max(1, mass);
     this.inverseMass = 1 / this.mass;
     this.inertia = inertia;
+    if (comOffset) this.comOffset.set(comOffset.x, comOffset.y, comOffset.z);
     this.refreshInertia();
   }
 
@@ -145,8 +158,14 @@ export class VehicleBody {
     return out.copy(world).applyQuaternion(this.scratchQ.copy(this.orientation).invert());
   }
 
+  /**
+   * Body-local point (relative to the geometric centre) to world. The centre
+   * of mass offset is removed first, because `position` tracks the centre of
+   * mass rather than the geometry.
+   */
   localPoint(local: WorldPoint, out: Vector3): Vector3 {
-    out.set(local.x, local.y, local.z).applyQuaternion(this.orientation);
+    out.set(local.x - this.comOffset.x, local.y - this.comOffset.y, local.z - this.comOffset.z);
+    out.applyQuaternion(this.orientation);
     return out.add(this.position);
   }
 
@@ -286,8 +305,15 @@ export class VehicleBody {
   }
 
   /** Interpolated render pose between the last two fixed steps. */
+  /**
+   * Interpolated pose of the *geometry*, which is the mesh origin, not the
+   * centre of mass the solver integrates.
+   */
   renderPosition(alpha: number, out: Vector3): Vector3 {
-    return out.lerpVectors(this.previousPosition, this.position, alpha);
+    out.lerpVectors(this.previousPosition, this.position, alpha);
+    if (this.comOffset.lengthSq() === 0) return out;
+    this.scratchB.copy(this.comOffset).applyQuaternion(this.renderOrientation(alpha, this.scratchQ));
+    return out.sub(this.scratchB);
   }
 
   renderOrientation(alpha: number, out: Quaternion): Quaternion {
