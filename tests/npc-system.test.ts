@@ -192,13 +192,14 @@ describe('NPC simulation', () => {
     simulate(npcs, 2, actor);
     const atNight = npcs.list();
     expect(atNight.length).toBeGreaterThan(0);
-    // Nobody is pathfinding far from home at 3am: they are at rest or heading home.
-    for (const npc of atNight) expect(['sleep', 'travel', 'idle', 'rest', 'work', 'wander']).toContain(npc.behaviour);
+    // Schedule intent is independent of perception: an NPC can investigate the
+    // nearby player even at night. Hydrology changes placement/visibility.
+    for (const npc of atNight) expect(npc.activity).toBe('sleep');
 
     setHour(12);
     simulate(npcs, 2, actor);
-    const midday = new Set(npcs.list().map((npc) => npc.behaviour));
-    expect(midday.size).toBeGreaterThan(0);
+    const midday = npcs.list();
+    expect(midday.some(npc => npc.activity !== 'sleep')).toBe(true);
     npcs.dispose();
   });
 });

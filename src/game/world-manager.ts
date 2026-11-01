@@ -207,8 +207,10 @@ export class WorldManager {
    *   terrain → vegetation → roads → water → physics ground → physics
    *   → entity streaming → entity simulation → physics-driven visual sync
    */
-  update(dt: number, position: Vector3, cameraPosition: Vector3 = position): void {
-    this.waterTime += dt;
+  update(dt: number, position: Vector3, cameraPosition: Vector3 = position, simulationTime?: number): void {
+    // The composition root can supply its fixed clock so loading screens and
+    // paused gameplay do not advance rendered waves ahead of swimming/vehicles.
+    this.waterTime = simulationTime ?? this.waterTime + dt;
     // Weather-owned ground state at the player: the same answer grip, particles
     // and the surface query use.
     this.conditions = this.query.conditionAt(position.x, position.z);

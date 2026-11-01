@@ -135,8 +135,9 @@ source audit, integration model, validation results and remaining work.
 
 ## Combined branch integration
 
-Phases 1–12 are now assembled in one tree, including Phase 9 (water &
-environment) from `arena/298dcffe-car-game` and Phase 11 milestone 11.1. See
+Phases 1–12 are assembled in one tree, including Phase 9 (water & environment)
+from `arena/298dcffe-car-game`. Phase 11 remains milestone 11.1, not the complete
+discovery/gameplay roadmap. See
 [INTEGRATION.md](INTEGRATION.md) for merged source commits, validation and known
 cross-phase adapter gaps. Presence in the combined tree is not a declaration that
 all planned features of a phase are complete.

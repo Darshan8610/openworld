@@ -4,7 +4,7 @@
 
 Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers and Rapier 3D.
 
-> This integration combines Phases 1–12 in one tree: the world foundation, biomes, roads, engine/physics, character, objects, buildings, NPCs, water & environment, vehicles, discovery milestone 11.1 and audio/UX. Phase 11 remains partial; combining branches does not make every roadmap feature complete. See [integration notes](docs/INTEGRATION.md) for source branches, verification and remaining seams.
+> This integration combines the existing Phases 1–12, including Phase 9 water/environment and Phase 12 audio/menus. Phase 11 remains milestone 11.1; combining branches does not make every roadmap feature complete. See [integration notes](docs/INTEGRATION.md) for source branches, verification and remaining seams.
 
 ## Quick start
 
@@ -18,7 +18,7 @@ Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires 
 ```bash
 npm run build         # type-check + production build
 npm run preview       # serve the production build
-npm test              # 478 unit/integration tests across 45 files
+npm test              # unit/integration tests across the full phase suite
 npm run test:browser  # Playwright browser suite (requires Chromium)
 ```
 
@@ -262,7 +262,7 @@ The phase lines were developed against the same Phase 3 base, so this branch rec
 - Chunk geometry, materials, instance buffers, textures and object geometry caches are disposed on eviction, seed change, quality change, and teardown.
 - Audio is hard-capped at 24 voices (per-bus 4/16/6) with a single shared 2-second generated noise buffer; ambience decisions run at 4 Hz, footsteps are distance-driven, and a paused game suspends the audio context entirely.
 - The performance overlay reports FPS, draw calls, triangles, geometries, cached/queued tiles, origin rebases, LOD distribution, plant count/capacity, instanced batch count, physics bodies/colliders/step time, streamed ground colliders, entity simulation levels, object counts, prop bodies, the interaction target, and audio state/voices/capacity/drops/zone/steps.
-- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The combined branch passes the production build and 478 unit/integration tests. Selected WebGL2 browser checks passed; the full browser suite and hardware WebGPU were not validated. See [integration notes](docs/INTEGRATION.md).
+- Browser validation in this repository's sandbox uses Chromium/SwiftShader (software WebGL2). It is functional coverage, not a hardware-GPU benchmark; a real WebGPU adapter was not available there. The combined branch passes the production build and its full unit/integration suite. Selected WebGL2 browser checks passed; the full browser suite and hardware WebGPU were not validated. See [integration notes](docs/INTEGRATION.md).
 
 ## Assets and licenses
 
@@ -277,3 +277,12 @@ The existing per-seed object autosave remains separate. Corrupt/newer game slots
 are refused rather than overwritten. Phase 11 is **in progress**: routing, minimap,
 mission infrastructure and other-phase entity adapters are not yet implemented.
 See [Phase 11 engineering notes](docs/PHASE11.md).
+
+### Phase 9 integrated
+
+Water/environment is now included alongside Phases 1–8 and 10–12. Water surfaces,
+swimming, prop buoyancy, weather and bounded particles share canonical coordinates.
+Vehicle controllers now consume the water surface and weather wind. **J** toggles
+water rendering and **N** cycles weather. URLs support `water=0|1` and
+`weather=auto|clear|cloudy|overcast|rain|heavy-rain|storm|fog|snow|blizzard|windy`.
+See [Phase 9 documentation](docs/PHASE9.md) and [integration notes](docs/INTEGRATION.md).

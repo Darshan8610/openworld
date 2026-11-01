@@ -12,10 +12,11 @@
 | Phase 9 water & environment | `arena/298dcffe-car-game` at `3e6e5be` |
 
 The feature lines were merged with ancestry retained, not copied as disconnected
-folders. Phase 9 is merged with the combined tree: hydrology carving shares the
-terrain field with road grading and building placement, buoyancy runs inside the
-existing Rapier and prop substep loops, and the weather front drives the sky and
-particles alongside the Phase 12 audio/UI systems.
+folders. Phase 9 was excluded in the first integration (PR #2); the refreshed
+integration includes it from `arena/298dcffe-car-game`. Hydrology carving shares
+the terrain field with road grading and building placement, buoyancy runs inside
+the existing Rapier and prop substep loops, and the weather front drives the sky
+and particles alongside the Phase 12 audio/UI systems.
 
 ## Shared composition and conflict resolution
 
@@ -36,10 +37,9 @@ particles alongside the Phase 12 audio/UI systems.
 - Manual Phase 11 grounded-player slots refuse saves while driving. The separate
   NPC/vehicle/building per-seed stores remain intact.
 - NPC/audio and vehicle lifecycle paths were retained together instead of selecting
-  one side of overlapping merge blocks.
-- Phase 9 merge: NPC toggle keeps `N`; weather cycling moved to `M` to avoid the
-  key collision. Both sides of the gameplay-layer, stats and dispose paths were
-  kept (water/particles alongside npcs/vehicles/buildings/audio).
+  one side of overlapping merge blocks. Phase 9 is now integrated with those paths.
+- Phase 9 key collision: the NPC toggle keeps `N`; weather cycling lives on `M`,
+  and both bindings are documented in the pause controls.
 
 ## Known boundaries
 
@@ -71,3 +71,25 @@ merely because their respective source phases are present in the same tree.
   to the integrated Phase 12 menus; both selected building tests then passed.
 - Full browser suite, hardware WebGPU and long-run performance were not executed.
   These selected checks are not a claim of full cross-phase acceptance.
+
+## Phase 9 integration follow-up
+
+- Preserved combined audio/menu/NPC/building/vehicle controls while adding water,
+  weather, buoyancy and particle ownership, lifecycle and stats.
+- Phase 10 now gets a live water provider (displaced elevation, normalized wave
+  normal, depth, currents) and fixed-step weather wind. No artificial water is
+  reported over dry terrain.
+- WorldManager receives the composition root's fixed simulation clock so water
+  rendering cannot advance ahead of swimming/vehicle waves while loading.
+- Particle pools are rebuilt/disposed on quality changes to respect preset caps.
+- Fixed stale full/reduced-fidelity NPC activity reporting from the behaviour brain.
+  The schedule integration test now checks schedule activity rather than disallowing
+  valid higher-priority perception reactions such as investigating the player.
+- 481 unit/integration tests across 46 files pass; production build/type check pass.
+- Software-WebGL2 browser checks executed: Phase 9 streaming/weather budget, pinned
+  storm precipitation, keyboard water toggle, and Phase 11 chart/save roundtrip.
+  Initial storm/toggle specs failed due to wall-clock timing on slow software GPUs
+  and assumptions predating the title menu; tests now wait for simulation state
+  and enter through the actual Phase 12 menu.
+- Full browser matrix, hardware WebGPU and long-run profiling remain unverified.
+  This does not complete Phase 11 or remove the adapter boundaries above.

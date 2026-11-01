@@ -1,3 +1,4 @@
+import { vehicleWaterProvider } from '../vehicles/water-adapter';
 import { Discovery } from '../discovery/discovery';
 import { DiscoveryPanel } from '../ui/discovery-panel';
 import { GameSaveStore } from '../persistence/game-save';
@@ -230,7 +231,8 @@ export class Game {
     const postParam = new URLSearchParams(location.search).get('postfx');
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
-    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group, this.npcs.group, this.vehicles.root, this.buildings.group, this.water.group, this.particles.group);
+    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group, this.npcs.group, this.vehicles.root, this.buildings.group);
+    this.scene.add(this.water.group, this.particles.group);
     this.world = new WorldManager({
       origin: this.origin, terrain: this.terrain, vegetation: this.vegetation, roads: this.roads, events: this.worldEvents,
       water: this.water, buoyancy: this.buoyancy,
@@ -521,7 +523,7 @@ export class Game {
       }, (alpha, dt) => {
         const focus = this.resolveActivePosition();
         this.cameraWorld.copy(this.activeCamera.position).add(this.origin.absolute);
-        this.world.update(dt, focus, this.cameraWorld);
+        this.world.update(dt, focus, this.cameraWorld, this.simTime);
         this.presentEnvironment(dt);
         this.buildings.update(focus, dt, this.sky.hour);
         this.buildingExperience.update(timestamp);
@@ -681,6 +683,8 @@ export class Game {
       height: this.queries.height(focus.x, focus.z),
     });
     this.queries.field.water.setActivity(weather.seaState);
+    this.weather.windVector(this.wind);
+    this.vehicles.environment.setWind(this.wind.x, 0, this.wind.z);
     if (weather.kind !== this.weatherKind) {
       const previous = this.weatherKind;
       this.weatherKind = weather.kind;
@@ -768,6 +772,7 @@ export class Game {
    * system holds queries for exactly one world.
    */
   private buildGameplayLayer(seed: string): void {
+    this.simTime = 0;
     const restored = this.store.load(seed);
     let saved: PersistedObjects = {};
     let inventory: readonly ItemStack[] = [];
@@ -840,9 +845,11 @@ export class Game {
       savedState: npcState,
     });
     this.npcs.setEnabled(this.npcsEnabled);
+    this.attachWaterForces();
     const vehicleSave = this.vehicleStore.load(seed);
     if (vehicleSave.status === 'invalid') console.warn('[Wayfarer] vehicle save ignored:', vehicleSave.reason);
     this.vehicles = new VehicleSystem({ seed, queries: this.queries, events: this.events, interaction: this.interaction,
+      water: vehicleWaterProvider(waterField, () => this.simTime),
       ...(vehicleSave.status === 'ok' ? { savedState: vehicleSave.save.vehicles } : {}) });
     this.attachWaterForces();
   }
@@ -954,14 +961,13 @@ export class Game {
     this.npcs.dispose();
     this.vehicles.dispose();
     this.scene.remove(this.vehicles.root);
-    this.water?.dispose();
-    this.particles?.dispose();
+    this.water?.dispose(); this.particles?.dispose();
     this.buildGameplayLayer(seed);
-    this.scene.add(this.objects.group, this.npcs.group, this.vehicles.root, this.water.group, this.particles.group);
+    this.scene.add(this.objects.group, this.npcs.group, this.vehicles.root);
+    this.scene.add(this.water.group, this.particles.group);
     // Swimming must follow the new world's hydrology, not the previous field.
-    this.character?.setWater(this.water.swimQuery);
-    this.world.setWater(this.water);
-    this.world.setBuoyancy(this.buoyancy);
+    this.character.setWater(this.water.swimQuery);
+    this.world.setWater(this.water); this.world.setBuoyancy(this.buoyancy);
     this.ui.syncObjects(this.objects.objectsEnabled);
     this.ui.syncNpcs(this.npcs.isEnabled);
     this.ui.setDialogue(null);
@@ -1143,6 +1149,14 @@ export class Game {
     this.npcs.setQuality(quality);
     this.ui.syncNpcs(this.npcs.isEnabled);
     this.water.setQuality(quality);
+    // Particle buffers are preset-sized; dispose and replace when budgets change.
+    this.particles.dispose();
+    this.particles = new ParticleSystem(this.origin, QUALITY[quality].particleBudget);
+    this.particles.setColliders(
+      (x, z) => this.queries.height(x, z),
+      (x, z) => this.queries.field.water.sampleAt(x, z)?.surfaceY,
+    );
+    this.scene.add(this.particles.group);
     this.propPhysics.setCapacity(QUALITY[quality].physicsBodies);
     this.ui.syncPost(this.post.isEnabled);
     this.ui.syncCamera(this.mode, this.character.isFirstPerson);
