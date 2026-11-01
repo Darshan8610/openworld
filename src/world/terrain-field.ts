@@ -4,6 +4,7 @@ import { SimplexNoise } from './noise';
 import { BiomeField, createClimateSample } from './biomes';
 import type { ClimateSample } from './biomes';
 import { RoadNetwork } from './road-network';
+import { BuildingPlacementField } from './buildings/placement';
 import type { Earthwork } from './road-network';
 
 /**
@@ -19,6 +20,7 @@ export class TerrainField {
   readonly cover: SimplexNoise;
   readonly biomes: BiomeField;
   readonly roads: RoadNetwork;
+  readonly buildings: BuildingPlacementField;
   private readonly roadWork: Earthwork = { corridor: 0, station: 0, lateral: 0, tangentX: 1, tangentZ: 0, normalX: 0, normalZ: 1, curvature: 0, pullout: 0, height: 0, weight: 0 };
 
   constructor(public readonly seed: string) {
@@ -29,6 +31,7 @@ export class TerrainField {
     this.cover = new SimplexNoise(hash ^ 0x1b873593);
     this.biomes = new BiomeField(seed);
     this.roads = new RoadNetwork(seed, (x, z) => this.naturalHeight(x, z));
+    this.buildings = new BuildingPlacementField(seed, this);
   }
 
   naturalHeight(x: number, z: number): number {

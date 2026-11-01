@@ -25,6 +25,10 @@ export class SurveyCamera {
   speed: number = CONFIG.camera.speed;
   private tourTime = 0;
   spawned = false;
+  /** Temporary Phase 7 inspection bridge; the Phase 5 human controller remains separate. */
+  inspecting = false;
+  private inspectionMotion?: (from: Vector3, desired: Vector3) => void;
+  private surveySpeed: number = CONFIG.camera.speed;
   private readonly euler = new Euler(0, 0, 0, 'YXZ');
   private readonly interpolated = new Vector3();
   private readonly direction = new Vector3();
@@ -35,6 +39,7 @@ export class SurveyCamera {
   }
 
   spawn(): void {
+    if (this.inspecting) { this.spawned = true; return; }
     const ground = this.terrain.heightAt(this.position.x, this.position.z);
     if (ground === undefined) return;
     this.position.y = ground + (this.routeFollowing ? CONFIG.camera.routeHeight : 55);
@@ -51,7 +56,7 @@ export class SurveyCamera {
     this.pitch = clamp(this.pitch - look.y * 0.0025, -1.42, 1.42);
     if (this.input.wheel) {
       if (this.routeFollowing) this.routeSpeed = clamp(this.routeSpeed * 0.85 ** this.input.wheel, 6, 60);
-      else this.speed = clamp(this.speed * 0.85 ** this.input.wheel, 20, 600);
+      else this.speed = clamp(this.speed * 0.85 ** this.input.wheel, this.inspecting ? 1 : 20, this.inspecting ? 12 : 600);
       this.input.wheel = 0;
     }
     if (this.routeFollowing) {
@@ -78,7 +83,7 @@ export class SurveyCamera {
       this.yaw += Math.sin(this.tourTime * 0.026) * dt * 0.016;
       this.pitch = damp(this.pitch, -0.09, 0.5, dt);
     }
-    const boost = this.input.down('ShiftLeft', 'ShiftRight') ? CONFIG.camera.boost : 1;
+    const boost = this.input.down('ShiftLeft', 'ShiftRight') ? this.inspecting ? 2 : CONFIG.camera.boost : 1;
     const speed = this.speed * boost;
     this.direction.set(-Math.sin(this.yaw) * forward + Math.cos(this.yaw) * strafe, vertical, -Math.cos(this.yaw) * forward - Math.sin(this.yaw) * strafe);
     if (this.direction.lengthSq() > 1) this.direction.normalize();
@@ -86,11 +91,12 @@ export class SurveyCamera {
     this.velocity.lerp(this.direction, 1 - Math.exp(-dt * 4));
     this.position.addScaledVector(this.velocity, dt);
     const ground = this.terrain.heightAt(this.position.x, this.position.z);
-    if (ground !== undefined) {
+    if (ground !== undefined && !this.inspecting) {
       const floor = ground + CONFIG.camera.clearance;
       if (this.position.y < floor) { this.position.y = floor; this.velocity.y = Math.max(0, this.velocity.y); }
       if (this.touring) this.position.y = damp(this.position.y, ground + 45, 0.45, dt);
     }
+    this.inspectionMotion?.(this.previous, this.position);
     this.origin.update(this.position);
   }
 
@@ -104,7 +110,23 @@ export class SurveyCamera {
     this.camera.updateProjectionMatrix();
   }
 
+  beginInspection(position: Vector3, yaw: number, constrain: (from: Vector3, desired: Vector3) => void): void {
+    if (!this.inspecting) this.surveySpeed = this.speed;
+    this.inspecting = true; this.inspectionMotion = constrain;
+    this.position.copy(position); this.previous.copy(position); this.velocity.set(0, 0, 0);
+    this.speed = 3.5; this.yaw = yaw; this.pitch = -0.04;
+    this.routeFollowing = false; this.touring = false; this.spawned = true;
+    this.camera.near = 0.08; this.camera.updateProjectionMatrix();
+    this.origin.update(this.position);
+  }
+  endInspection(): void {
+    if (!this.inspecting) return;
+    this.inspecting = false; this.inspectionMotion = undefined; this.speed = this.surveySpeed;
+    this.camera.near = CONFIG.camera.near; this.camera.updateProjectionMatrix();
+    this.velocity.set(0, 0, 0); this.spawned = false;
+  }
   startRoute(corridor: number, station: number): void {
+    this.endInspection();
     this.routeFollowing = true; this.touring = false;
     this.routeCorridor = corridor; this.routeStation = station;
     const point = this.roads.point(corridor, station);
@@ -113,6 +135,7 @@ export class SurveyCamera {
     this.spawned = false;
   }
   reset(): void {
+    this.endInspection();
     this.routeFollowing = false;
     this.position.copy(this.home); this.velocity.set(0, 0, 0);
     this.yaw = -0.58; this.pitch = -0.16; this.tourTime = 0;

@@ -67,6 +67,10 @@ interface MutableActor extends ActorView {
   forward: WorldPoint;
   yaw: number;
 }
+import { BuildingManager } from '../world/buildings/manager';
+import { BuildingExperience } from '../world/buildings/experience';
+import { TerrainField } from '../world/terrain-field';
+import type { BuildingStorage } from '../world/buildings/state';
 
 /** Composition root: subsystem ownership and lifecycle are explicit. */
 export class Game {
@@ -80,6 +84,8 @@ export class Game {
   private readonly terrain: TerrainManager;
   private readonly vegetation: VegetationManager;
   private readonly roads: RoadManager;
+  private readonly buildings: BuildingManager;
+  private readonly buildingExperience: BuildingExperience;
   private readonly rig: SurveyCamera;
   private readonly character: CharacterSystem;
   private readonly sky: SkySystem;
@@ -154,7 +160,7 @@ export class Game {
 
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     this.context = context; this.seed = seed; this.quality = quality;
-    this.scene.name = 'Wayfarer / Phase 12';
+    this.scene.name = 'Wayfarer / integrated Phases 1–8, 10–12';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
     this.input = new Input(context.canvas);
     // Preferences are local and known before anything else runs, so the first
@@ -189,13 +195,20 @@ export class Game {
       reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
     });
     this.character.spawnAt(position.x, position.z);
+    let buildingStorage: BuildingStorage | undefined;
+    try { buildingStorage = window.localStorage; } catch (error) { console.warn('[Buildings] Browser storage unavailable; door state is session-only.', error); }
+    this.buildings = new BuildingManager({
+      seed, quality, origin: this.origin, terrain: this.terrain, storage: buildingStorage,
+      onReservationsChanged: () => this.vegetation.invalidateReservations(),
+    });
+    this.vegetation.setReservationQuery((x, z) => this.buildings.field.isAuthoredReserved(x, z));
     this.sky = new SkySystem(context.renderer, this.scene, seed, quality);
     this.sky.setHour(hour);
     this.post = new PostProcessing(context.renderer, this.scene, this.character.camera, quality);
     const postParam = new URLSearchParams(location.search).get('postfx');
     if (postParam !== null) this.post.setEnabled(postParam !== '0');
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { this.sky.cycling = false; this.rig.touring = false; }
-    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group, this.npcs.group, this.vehicles.root);
+    this.scene.add(this.terrain.group, this.vegetation.group, this.roads.group, this.objects.group, this.npcs.group, this.vehicles.root, this.buildings.group);
     this.world = new WorldManager({
       origin: this.origin, terrain: this.terrain, vegetation: this.vegetation, roads: this.roads, events: this.worldEvents,
     });
@@ -207,6 +220,7 @@ export class Game {
       this.objects.rebase(this.origin.absolute);
       this.npcs.rebase(this.origin.absolute);
       this.vehicles.rebase(this.origin.absolute);
+      this.buildings.rebase();
       this.events.emit('world:originRebased', {
         x: this.origin.absolute.x, y: this.origin.absolute.y, z: this.origin.absolute.z, shifts: this.origin.shifts,
       });
@@ -265,6 +279,7 @@ export class Game {
       title: () => location.reload(),
       uiSound: (sound) => this.audioDirector.ui(sound),
     });
+    this.buildingExperience = new BuildingExperience(this.buildings, this.rig, this.terrain, { loading: () => { this.setMode('survey'); this.beginLoading(); }, changed: () => this.updateURL(), toast: (message) => this.ui.toast(message) });
     this.ui.syncTime(hour, this.sky.cycling);
     this.ui.syncNature(this.vegetation.vegetationEnabled, this.vegetation.windEnabled, this.roads.roadsEnabled);
     this.ui.syncPost(this.post.isEnabled);
@@ -283,6 +298,16 @@ export class Game {
     this.ui.setPack(this.inventory.stacks());
     this.events.on('inventory:changed', ({ items }) => this.ui.setPack(items));
     this.events.on('object:stateChanged', () => { this.saveDirty = true; });
+    this.events.on('vehicle:damaged', () => { this.saveDirty = true; });
+    this.events.on('vehicle:exited', () => { this.saveDirty = true; });
+    this.events.on('vehicle:entered', ({ id, actor }) => {
+      if (actor !== 'player') return;
+      const vehicle = this.vehicles.driven;
+      if (!vehicle || vehicle.id !== id) return;
+      this.driving = vehicle;
+      this.character.active = false;
+      this.vehicleInput.reset(); this.vehicleCamera.reset();
+    });
     this.events.on('npc:talkStarted', () => { this.saveDirty = true; });
     this.events.on('npc:talkEnded', () => { this.ui?.setDialogue(null); });
     this.events.on('inventory:changed', () => { this.saveDirty = true; });
@@ -323,10 +348,10 @@ export class Game {
 
       if (code === 'KeyP') { this.sky.cycling = !this.sky.cycling; this.ui.syncTime(this.sky.hour, this.sky.cycling); }
       if (code === 'KeyC') this.setMode(this.mode === 'character' ? 'survey' : 'character');
-      if (code === 'KeyF') { this.character.toggleFirstPerson(); this.ui.syncCamera(this.mode, this.character.isFirstPerson); }
+      if (code === 'KeyF' && !this.rig.inspecting) { this.character.toggleFirstPerson(); this.ui.syncCamera(this.mode, this.character.isFirstPerson); }
       if (code === 'KeyZ') this.character.toggleShoulder();
       // Phase 10: Q enters/leaves a vehicle, Y cycles the vehicle camera.
-      if (code === 'KeyQ') { this.toggleVehicle(); this.ui.dismissIntro(); }
+      if (code === 'KeyQ' && this.mode === 'character') { this.toggleVehicle(); this.ui.dismissIntro(); }
       if (code === 'KeyY' && this.driving) {
         const view = this.vehicleCamera.cycle();
         this.events.emit('vehicle:viewChanged', { id: this.driving.id, view });
@@ -352,12 +377,16 @@ export class Game {
     const hour = params.has('hour') && Number.isFinite(Number(params.get('hour'))) ? clamp(Number(params.get('hour')), 0, 23.99) : CONFIG.sky.initialHour;
     const coordinate = (key: string) => { const value = Number(params.get(key)); return params.has(key) && Number.isFinite(value) ? clamp(value, -1e12, 1e12) : 0; };
     const position = new Vector3(coordinate('x'), 450, coordinate('z'));
-    const route = SCENIC_ROUTES.find((r) => r.id === params.get('route')) ?? (!params.has('x') && !params.has('z') ? SCENIC_ROUTES[0] : undefined);
+    const requestedBuilding = params.get('building');
+    const building = requestedBuilding ? new TerrainField(seed).buildings.getById(requestedBuilding) : undefined;
+    const route = building ? undefined : (SCENIC_ROUTES.find((r) => r.id === params.get('route')) ?? (!params.has('x') && !params.has('z') ? SCENIC_ROUTES[0] : undefined));
     if (route) {
       const network = new RoadNetwork(seed, () => 0);
       const station = findRouteStation(seed, route.corridor, route.biome, route.station);
       const point = network.point(route.corridor, station);
       position.set(point.x, 450, point.z);
+    } else if (building) {
+      position.set(building.position.x, building.position.y + 1.65, building.position.z);
     } else if (!params.has('x') && !params.has('z')) {
       const vista = findBiomeViewpoint(seed, 1);
       position.set(vista.x, vista.y + 110, vista.z);
@@ -371,6 +400,7 @@ export class Game {
     const characterUrl = params.get('character');
     if (characterUrl) await game.character.loadAsset(characterUrl);
     game.ui.syncCamera(game.mode, game.character.isFirstPerson);
+    if (building) game.buildingExperience.visit(building);
     return game;
   }
 
@@ -442,13 +472,16 @@ export class Game {
         } else if (this.mode === 'character') this.character.fixedUpdate(dt);
         else this.rig.fixedUpdate(dt);
         this.vehicles.fixedUpdate(dt, this.resolveActivePosition());
+        this.buildings.fixedUpdate(dt, this.resolveActivePosition());
         this.propPhysics.step(dt, this.groundSample);
         this.npcs.fixedUpdate(dt, this.resolveActivePosition());
         this.updateInteraction(dt);
       }, (alpha, dt) => {
         const focus = this.resolveActivePosition();
         this.world.update(dt, focus);
-        if (this.ready && this.mode === 'character') this.discovery.visit(focus);
+        this.buildings.update(focus, dt, this.sky.hour);
+        this.buildingExperience.update(timestamp);
+        if (this.ready && this.ui.overlay === 'none' && this.mode === 'character') this.discovery.visit(focus);
         this.discoveryPanel.update(focus, this.character.controller.yaw, timestamp);
         if (!this.ready) {
           this.loadTime += dt;
@@ -557,6 +590,7 @@ export class Game {
    */
   private setMode(mode: ViewMode): void {
     if (mode === this.mode) return;
+    if (this.driving) this.leaveVehicle();
     if (mode === 'survey') {
       this.rig.position.copy(this.character.ready ? this.character.position : this.rig.position);
       this.rig.previous.copy(this.rig.position);
@@ -643,7 +677,7 @@ export class Game {
       interaction: this.interaction,
       quality: this.quality,
       terrain: this.terrain,
-      blockers: { blocked: (x, z) => this.objects.blocksWalk(x, z) },
+      blockers: { blocked: (x, z) => this.objects.blocksWalk(x, z) || (this.buildings?.field.reserved(x, z, 1) ?? false) },
       time: () => this.sky?.hour ?? CONFIG.sky.initialHour,
       notify: (message) => { this.ui?.toast(message); },
       savedState: npcState,
@@ -735,6 +769,7 @@ export class Game {
    * rig while flying, so a prompt always matches the camera that produced it.
    */
   private updateInteraction(dt: number): void {
+    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); return; }
     const onFoot = this.mode === 'character' && this.character.ready;
     const position = onFoot ? this.character.position : this.rig.position;
     const yaw = onFoot ? this.character.cameraRig.yaw : this.rig.yaw;
@@ -792,6 +827,7 @@ export class Game {
 
   /** Manual slots are separate from legacy per-seed object autosaves. */
   saveGame(slot: number): void {
+    if (this.driving) { this.ui.toast('Exit the vehicle before saving a grounded player slot.'); return; }
     if (!this.ready || !this.character.ready) { this.ui.toast('Wait for the world to finish loading.'); return; }
     try {
       const p = this.character.position;
@@ -830,6 +866,7 @@ export class Game {
   }
 
   private toggleTour(): void {
+    if (this.rig.inspecting) this.buildingExperience.stop();
     if (this.rig.routeFollowing || this.rig.touring) { this.rig.routeFollowing = false; this.rig.touring = false; }
     else this.rig.touring = true;
     this.updateURL();
@@ -843,6 +880,7 @@ export class Game {
     if (!this.physics || !this.world.isReady) { this.ui.toast('Physics is still initialising'); return; }
     // Drop in front of whatever the player is looking through: the character on
     // foot, the survey rig while flying.
+    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); return; }
     const onFoot = this.mode === 'character' && this.character.ready;
     const from = onFoot ? this.character.position : this.rig.position;
     const yaw = onFoot ? this.character.cameraRig.yaw : this.rig.yaw;
@@ -864,8 +902,10 @@ export class Game {
 
   private changeSeed(seed: string): void {
     this.beginLoading();
+    this.buildingExperience.stop();
     this.seed = seed;
     this.discovery.restore({ cells: [], waypoint: null });
+    this.buildings.reset(seed);
     this.origin.reset();
     this.terrain.reset(seed, this.quality);
     this.vegetation.reset();
@@ -890,6 +930,7 @@ export class Game {
     this.terrain.reset(this.seed, quality);
     this.vegetation.setQuality(quality);
     this.roads.setQuality(quality);
+    this.buildings.setQuality(quality);
     this.sky.setQuality(quality);
     this.post.setQuality(quality);
     this.objects.setQuality(quality);
@@ -911,6 +952,7 @@ export class Game {
   private travelRoute(id: string): void {
     const route = SCENIC_ROUTES.find((r) => r.id === id);
     if (!route) return;
+    this.buildingExperience.stop();
     this.beginLoading();
     const station = findRouteStation(this.seed, route.corridor, route.biome, route.station);
     this.rig.startRoute(route.corridor, station);
@@ -927,6 +969,7 @@ export class Game {
   }
 
   private travelTo(biome: BiomeId): void {
+    this.buildingExperience.stop();
     const radius = biome >= 3 ? 9000 : 6000;
     const from = this.resolveActivePosition();
     const vista = findBiomeViewpoint(this.seed, biome, from.x, from.z, radius);
@@ -961,6 +1004,8 @@ export class Game {
     url.searchParams.set('postfx', this.post.isEnabled ? '1' : '0');
     if (this.world.isEnabled) url.searchParams.delete('physics'); else url.searchParams.set('physics', '0');
     url.searchParams.set('mode', this.mode);
+    const building = this.buildingExperience?.activeBuilding;
+    if (building) url.searchParams.set('building', building); else url.searchParams.delete('building');
     history.replaceState(null, '', url);
   }
 
@@ -1077,6 +1122,7 @@ export class Game {
   private updateAudio(dt: number, focus: Vector3): void {
     if (!this.ready) return;
     this.captionClock += dt;
+    if (this.driving) { this.interactPressed = false; this.ui.setPrompt(null); return; }
     const onFoot = this.mode === 'character' && this.character.ready;
     const character = this.character.snapshot();
     const frame: AudioFrame = {
@@ -1138,6 +1184,8 @@ export class Game {
       shifts: this.origin.shifts, hour: this.sky.hour, ...this.terrain.stats,
       quality: this.quality, biome: BIOMES[this.terrain.biomeAt(focus.x, focus.z)]!.name,
       biomeDebug: this.terrain.biomeDebug, vegetationEnabled: this.vegetation.vegetationEnabled,
+      vehicles: this.vehicles.stats(), driving: this.driving?.id ?? null,
+      inspecting: this.rig.inspecting, buildings: this.buildings.snapshot(),
       windEnabled: this.vegetation.windEnabled, detailEnabled: this.terrain.material.detailEnabled, postfxEnabled: this.post.isEnabled, vegetation: this.vegetation.stats,
       roads: this.roads.stats, world: this.world.stats,
       routeFollowing: this.rig.routeFollowing, route: this.rig.routeFollowing ? this.roads.routeAt(this.rig.position) : null,
@@ -1159,6 +1207,7 @@ export class Game {
     this.disposed = true;
     this.abort.abort(); this.unsubscribeOrigin();
     void this.context.renderer.setAnimationLoop(null);
+    this.buildingExperience.dispose(); this.buildings.dispose();
     if (this.saveDirty) this.flushSave();
     this.discoveryPanel.dispose();
     this.input.dispose(); this.ui.dispose(); this.world.dispose();

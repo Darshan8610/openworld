@@ -62,6 +62,7 @@ export function generateVegetation(coord: TileCoord, seed: string, field: Terrai
       const x = canonicalX * rule.spacing + cellRandom(canonicalX, canonicalZ, seedHash, rule.salt + 1) * rule.spacing * 0.86;
       const z = canonicalZ * rule.spacing + cellRandom(canonicalX, canonicalZ, seedHash, rule.salt + 2) * rule.spacing * 0.86;
       if (x < left || x >= left + size || z < top || z >= top + size) continue;
+      if (field.buildings.reserved(x, z, kind === 9 ? 16 : kind === 0 || kind === 5 ? 8 : 3)) continue;
       // Keep the carriageway, shoulders, pullouts and cut/fill slopes clear.
       const corridor = Math.round((z - field.roads.center(0, x)) / CONFIG.roads.corridorSpacing);
       if (Math.abs(z - field.roads.center(corridor, x)) < 72) {
