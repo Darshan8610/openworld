@@ -34,9 +34,9 @@ const MAX_ANCHOR_SLOPE = 0.55;
 /** Candidate verge distances from the centreline, metres, nearest first. */
 const VERGE_OFFSETS = [13, 19, 26, 34, 44, 56, 70, 86] as const;
 /** Wild candidates attempted per cell. */
-const WILD_ATTEMPTS = 3;
+const WILD_ATTEMPTS = 7;
 /** Minimum spacing between two NPCs placed in the same cell, metres. */
-const MIN_SPACING = 55;
+const MIN_SPACING = 40;
 /** Never place inside the graded formation, metres. */
 const ROAD_CLEARANCE = 10;
 
@@ -63,7 +63,7 @@ export function planNpcCell(cellX: number, cellZ: number, inputs: NpcPlacementIn
   // ---- Roadside population ---------------------------------------------------
   for (let corridor = corridorMin; corridor <= corridorMax; corridor++) {
     for (let slot = stationMin; slot <= stationMax; slot++) {
-      if (random() > 0.55) continue;
+      if (random() > 0.82) continue;
       const side = random() < 0.5 ? -1 : 1;
       const jitter = (random() - 0.5) * 70;
       const station = slot * NPC_STATION_SPACING + jitter;

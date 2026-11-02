@@ -282,7 +282,7 @@ export function interfaceMarkup(
       </main>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
       <div class="captions" id="captions-feed" role="status" aria-live="polite" aria-label="Sound captions" hidden></div>
-      <div class="letterbox" id="letterbox" hidden aria-hidden="true"><i class="letterbox-top"></i><i class="letterbox-bottom"></i></div>
+      <div class="letterbox" id="letterbox" hidden aria-hidden="true"><i class="letterbox-top"></i><i class="letterbox-bottom"></i><span class="letterbox-hint"><kbd>Esc</kbd> skip · <kbd>Space</kbd> skip</span></div>
       <div class="story-subtitle" id="story-subtitle" role="status" aria-live="polite" hidden><b id="story-subtitle-speaker"></b><span id="story-subtitle-text"></span></div>
       <div class="mission-banner" id="mission-banner" role="status" aria-live="polite" hidden><span class="mission-banner-kind" id="mission-banner-kind"></span><b id="mission-banner-title"></b><span id="mission-banner-detail"></span></div>
       <div class="clue-overlay" id="clue-overlay" role="dialog" aria-label="Field note" hidden><div class="clue-card"><span class="eyebrow" id="clue-kind">FIELD NOTE</span><h2 id="clue-title"></h2><p id="clue-body"></p><button class="primary" id="clue-close" type="button">Close <span>×</span></button></div></div>

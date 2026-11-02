@@ -138,6 +138,7 @@ export class Game {
   private story?: StoryGame;
   /** Authoring flag read once from the URL; the sandbox stays reachable via story=0. */
   private readonly storyEnabled: boolean;
+  private storyActorsSpawned = false;
   /** Solids the survey camera and character collide with (buildings + story bounds). */
   private readonly cameraSolids: Object3D[] = [];
   /** Seconds accumulated toward the silent 120 s autosave (slot 0). */
@@ -427,7 +428,8 @@ export class Game {
       this.scene.add(this.story.bounds.group);
       this.cameraSolids.push(this.story.bounds.group);
       this.story.bounds.setSurfaceSampler((x, z) => this.terrain.heightAt(x, z) ?? 0);
-      this.spawnStoryActors();
+      // Story actors spawn after the first tiles exist — their ground height
+      // is meaningless at construction time (see world-ready hook below).
     }
     this.events.on('object:stateChanged', () => { this.saveDirty = true; });
     this.events.on('vehicle:damaged', () => { this.saveDirty = true; });
@@ -461,6 +463,9 @@ export class Game {
         this.updateURL();
         this.ui.toast(this.npcsEnabled ? 'People return to the world' : 'People hidden — the world still streams');
       }
+      // Enter / Space also skip a running shot — Escape stays the documented
+      // one, but no key should ever feel stuck behind a cutscene.
+      if ((code === 'Enter' || code === 'Space') && this.story?.cinematic.active) this.story.cinematic.skip();
       // Escape: a running cinematic skips first, then the interface owns it
       // while a menu is open (settings → pause → world); otherwise a
       // conversation closes, or the pause menu opens.
@@ -688,6 +693,10 @@ export class Game {
               this.worldEvents.emit('world:ready', { seed: this.seed, backend: this.context.backend, physics: !!this.physics });
               this.sky.update(0, this.origin.toLocal(this.activePosition, this.localPosition), this.activeCamera, true);
               this.ui.ready(this.context.backend);
+              if (this.story && !this.storyActorsSpawned) {
+                this.storyActorsSpawned = true;
+                this.spawnStoryActors();
+              }
               this.story?.onWorldReady();
               this.loop.reset();
               if (this.context.fallbackReason) this.ui.toast(`Using WebGL2 compatibility mode · ${this.context.backend}`);
@@ -993,6 +1002,37 @@ export class Game {
       x: porch.x, y: porch.y, z: porch.z, yaw: 2.6,
       anchors: { home: porch, work: porch, leisure: porch },
     });
+    // Townsfolk: a living street population for the city district. Each one
+    // gets three nearby anchors so they actually stroll between home, work
+    // and leisure instead of freezing in place.
+    const townfolk: Array<{ id: string; role: 'wanderer' | 'worker' | 'watcher' | 'traveller'; x: number; z: number; yaw: number }> = [
+      { id: 'story:town-01', role: 'worker',     x: CAMPAIGN.arrival.x + 24,  z: CAMPAIGN.arrival.z + 14, yaw: 1.2 },
+      { id: 'story:town-02', role: 'wanderer',   x: LANDMARKS[0]!.x + 18,     z: LANDMARKS[0]!.z + 15,    yaw: 2.4 },
+      { id: 'story:town-03', role: 'watcher',    x: LANDMARKS[0]!.x - 12,     z: LANDMARKS[0]!.z + 21,    yaw: 0.4 },
+      { id: 'story:town-04', role: 'wanderer',   x: LANDMARKS[0]!.x + 30,     z: LANDMARKS[0]!.z - 16,    yaw: 3.6 },
+      { id: 'story:town-05', role: 'traveller',  x: LANDMARKS[1]!.x + 20,     z: LANDMARKS[1]!.z + 12,    yaw: 4.1 },
+      { id: 'story:town-06', role: 'wanderer',   x: LANDMARKS[1]!.x - 16,     z: LANDMARKS[1]!.z - 14,    yaw: 5.2 },
+      { id: 'story:town-07', role: 'worker',     x: LANDMARKS[1]!.x + 8,      z: LANDMARKS[1]!.z + 26,     yaw: 0.9 },
+      { id: 'story:town-08', role: 'wanderer',   x: LANDMARKS[2]!.x + 22,     z: LANDMARKS[2]!.z - 10,    yaw: 2.0 },
+      { id: 'story:town-09', role: 'watcher',    x: LANDMARKS[2]!.x - 14,     z: LANDMARKS[2]!.z + 18,    yaw: 4.8 },
+      { id: 'story:town-10', role: 'worker',     x: LANDMARKS[2]!.x + 6,      z: LANDMARKS[2]!.z + 30,    yaw: 1.6 },
+      { id: 'story:town-11', role: 'wanderer',   x: -120,                     z: -255,                    yaw: 0.2 },
+      { id: 'story:town-12', role: 'traveller',  x: -44,                      z: -163,                    yaw: 3.1 },
+      { id: 'story:town-13', role: 'wanderer',   x: 63,                       z: -271,                    yaw: 5.7 },
+      { id: 'story:town-14', role: 'watcher',    x: -312,                     z: -95,                     yaw: 2.7 },
+      { id: 'story:town-15', role: 'wanderer',   x: 156,                      z: -474,                    yaw: 4.4 },
+      { id: 'story:town-16', role: 'worker',     x: -496,                     z: -171,                    yaw: 1.1 },
+    ];
+    for (const person of townfolk) {
+      const home = { x: person.x, y: ground(person.x, person.z), z: person.z };
+      const work = { x: person.x + 9, y: ground(person.x + 9, person.z + 6), z: person.z + 6 };
+      const leisure = { x: person.x - 7, y: ground(person.x - 7, person.z - 9), z: person.z - 9 };
+      this.npcs.addAuthored({
+        id: person.id, role: person.role,
+        x: home.x, y: home.y, z: home.z, yaw: person.yaw,
+        anchors: { home, work, leisure },
+      });
+    }
   }
 
   private readonly sightRay = new Raycaster();
@@ -1589,6 +1629,9 @@ export class Game {
 
   /** Overlay changes are the single source of truth for pausing and pointer lock. */
   private handleOverlay(overlay: string): void {
+    // First transition off a menu starts (or queues) the story session — the
+    // title screen never runs the opening behind the menu.
+    if (overlay === 'none') this.story?.requestEnter();
     const paused = overlay === 'pause';
     if (paused !== this.paused) this.setPaused(paused);
     if (overlay !== 'none') {

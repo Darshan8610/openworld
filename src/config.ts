@@ -313,7 +313,7 @@ export const CONFIG = {
     /** Cells loaded around the player (2 = 5×5). */
     loadRadius: 2,
     /** Beyond this the NPC is not streamed at all. */
-    streamDistance: 640,
+    streamDistance: 980,
     /** Full-fidelity band: skinned rig, pathfinding and every fixed step. */
     fullDistance: 95,
     /** Reduced band: proxy body, ~15 Hz thinking. */

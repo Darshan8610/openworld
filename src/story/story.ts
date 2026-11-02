@@ -85,6 +85,10 @@ export class StoryGame {
   private city?: StoryCity;
   private readonly unsubscribers: (() => void)[] = [];
   private openingDone = false;
+  /** World streamed + dressing built; the shot waits for `requestEnter`. */
+  private worldReady = false;
+  /** The player pressed New game (possibly while still loading). */
+  private enterRequested = false;
   private creditsShown = false;
   private spottedSubtitle = 0;
 
@@ -116,7 +120,8 @@ export class StoryGame {
       onDoor: (id) => this.onStoryDoor(id),
       ground: deps.ground,
     });
-    for (const spec of STORY_PROPS) this.props.add(spec);
+    // STORY_PROPS register in ensureWorldDressing — their ground height is
+    // only meaningful once terrain tiles exist.
     const station = landmark('forestry');
     this.patrol = new ShadowPatrol({ x: station.x, z: station.z }, 26, {
       ground: deps.ground,
@@ -134,6 +139,7 @@ export class StoryGame {
 
   /** Build ground-sampled dressing once real terrain tiles exist. */
   private ensureWorldDressing(): void {
+    for (const spec of STORY_PROPS) this.props.add(spec);
     if (!this.atmosphere) {
       this.atmosphere = new StoryAtmosphere({
         ground: this.deps.ground, roadZ: this.deps.roadZ, bounds: CAMPAIGN.bounds,
@@ -157,9 +163,25 @@ export class StoryGame {
 
   /** First time the world reports ready: open with the stranded arrival. */
   onWorldReady(): void {
+    if (this.worldReady) return;
+    this.worldReady = true;
+    this.ensureWorldDressing();
+    // The title screen keeps a still backdrop: the opening cutscene only
+    // starts once the player actually enters the world (no rotating view
+    // behind the menu).
+    if (this.enterRequested) this.startSession();
+  }
+
+  /** Called the first time a menu overlay clears (New game pressed). */
+  requestEnter(): void {
+    if (this.enterRequested) return;
+    this.enterRequested = true;
+    if (this.worldReady) this.startSession();
+  }
+
+  private startSession(): void {
     if (this.openingDone) return;
     this.openingDone = true;
-    this.ensureWorldDressing();
     if (this.director.started || this.narrative.hasCutscene('opening')) {
       // Restored progress: no opening replay; resume the chain.
       if (!this.director.started) this.director.begin();
