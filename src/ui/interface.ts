@@ -326,7 +326,20 @@ export class Interface {
     on('menu-quality', 'change', () => actions.quality($<HTMLSelectElement>('#menu-quality').value as QualityName));
     // Console-style menu: ↑/↓ cycle the main items while the title is up.
     document.addEventListener('keydown', (event) => {
-      if (this.overlay !== 'title' || (event.code !== 'ArrowDown' && event.code !== 'ArrowUp')) return;
+      if (this.overlay !== 'title') return;
+      // Keyboard fallback: Enter/Space starts the game unless focus already
+      // sits on a control (native button activation handles that case).
+      if (event.code === 'Enter' || event.code === 'Space') {
+        const active = document.activeElement;
+        const onControl = active instanceof HTMLButtonElement || active instanceof HTMLInputElement
+          || active instanceof HTMLSelectElement || active instanceof HTMLAnchorElement;
+        if (!onControl) {
+          event.preventDefault();
+          $<HTMLButtonElement>('#explore').click();
+        }
+        return;
+      }
+      if (event.code !== 'ArrowDown' && event.code !== 'ArrowUp') return;
       const items = [...document.querySelectorAll<HTMLButtonElement>('.game-menu-item')];
       if (items.length === 0) return;
       event.preventDefault();
@@ -463,6 +476,13 @@ export class Interface {
 
   private applyOverlay(overlay: Overlay): void {
     const settingsOpen = overlay === 'settings';
+    // Landing on the title must always present a live menu: heal any state
+    // (a stray HUD-hide from in-game H, a stale dismissed intro) that could
+    // leave the buttons visible-but-dead.
+    if (overlay === 'title') {
+      this.restoreIntro();
+      $('#interface').classList.remove('hud-hidden');
+    }
     $('#settings').hidden = !settingsOpen;
     $('#settings-toggle').setAttribute('aria-expanded', String(settingsOpen));
     $('#pause').hidden = overlay !== 'pause';
