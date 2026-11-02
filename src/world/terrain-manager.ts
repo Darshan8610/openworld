@@ -136,12 +136,20 @@ export class TerrainManager {
     this.commitRoots();
   }
 
+  private plateauZone: import('./terrain-field').TerrainPlateau | null = null;
+
+  /** Story campaigns flatten their district; sandbox mode never calls this. */
+  setPlateau(zone: import('./terrain-field').TerrainPlateau | null): void {
+    this.plateauZone = zone;
+  }
+
   private request(coord: TileCoord, position: Vector3): void {
     const key = tileKey(coord), epoch = this.epoch;
     this.inflight.add(key);
     this.pool.request({
       type: 'generate', epoch, seed: this.seed,
       ...coord, segments: QUALITY[this.quality].segments,
+      plateau: this.plateauZone,
     }, distanceToTile(coord, position.x, position.z) - coord.level * 180).then((response) => {
       this.inflight.delete(key);
       if (this.disposed || epoch !== this.epoch) return;

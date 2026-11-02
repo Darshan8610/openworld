@@ -193,9 +193,20 @@ export function interfaceMarkup(
           <div class="top-actions"><span class="backend" id="backend"><i></i>${escapeHtml(backend)}</span><button class="icon-button" id="settings-toggle" aria-label="World settings" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg></button></div>
         </header>
         <div class="compass" aria-label="Compass"><span>W</span><i></i><span>N</span><i></i><span>E</span><b id="heading">033°</b></div>
-        <section class="intro" id="intro"><div class="eyebrow"><span></span> THE INFINITE WORLD PROJECT</div><h1>Take the
-long way home.</h1><p>No finish line. No edge of the map.
-Just you, and what’s over the next ridge.</p>${menuFieldsMarkup(seed, quality)}<div class="menu-actions"><button class="primary" id="explore">Enter the world <span>↗</span></button><button class="text-button" id="menu-settings">World settings</button><button class="text-button" id="menu-share">Copy world link</button></div><p class="menu-status" id="menu-status">Preparing the terrain…</p><div class="phase-note">PHASE 12 <span>·</span> A WORLD THAT ANSWERS</div></section>
+        <section class="intro game-menu" id="intro">
+          <div class="game-menu-fog" aria-hidden="true"></div>
+          <div class="game-menu-kicker eyebrow"><span></span> BLACKWOOD VALLEY · NIGHT ONE</div>
+          <h1 class="game-menu-title">Echoes of<br>Blackwood Valley</h1>
+          <p class="game-menu-tag">A psychological thriller inside one square kilometre. Two hours. One night.<br>Nobody is answering the radio.</p>
+          <div class="menu-actions game-menu-actions">
+            <button class="primary game-menu-item" id="explore">New game <span>↵</span></button>
+            <button class="text-button game-menu-item" id="menu-settings">Settings</button>
+            <button class="text-button game-menu-item" id="menu-share">Copy world link</button>
+          </div>
+          ${menuFieldsMarkup(seed, quality)}
+          <p class="menu-status" id="menu-status">Preparing the terrain…</p>
+          <div class="game-menu-footer"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>E</kbd> interact · <kbd>Esc</kbd> pause<i></i>DESKTOP BUILD v1.0</div>
+        </section>
         <aside class="settings" id="settings" aria-label="World settings" hidden>
           <div class="panel-heading"><div><span class="eyebrow">MAKE IT YOURS</span><h2>World settings</h2></div><button class="icon-button" id="settings-close" aria-label="Close settings">×</button></div>
           <label class="field-label" for="seed">World seed <span>Same seed. Same world.</span></label>
@@ -298,7 +309,7 @@ export class Interface {
   private settingsReturnFocus: HTMLElement | null = null;
   /** Notified whenever the overlay changes; the game pauses/resumes from this. */
   onOverlayChange?: (overlay: Overlay) => void;
-  constructor(seed: string, hour: number, quality: QualityName, backend: BackendName, actions: UIActions) {
+  constructor(seed: string, hour: number, quality: QualityName, backend: BackendName, private readonly actions: UIActions) {
     $('app').insertAdjacentHTML('beforeend', interfaceMarkup(hour, backend, seed, quality));
     $<HTMLInputElement>('#seed').value = seed;
     $<HTMLSelectElement>('#quality').value = quality;
@@ -313,6 +324,18 @@ export class Interface {
     on('menu-seed-form', 'submit', (event) => { event.preventDefault(); actions.seed($<HTMLInputElement>('#menu-seed').value); });
     on('menu-random', 'click', () => actions.randomSeed());
     on('menu-quality', 'change', () => actions.quality($<HTMLSelectElement>('#menu-quality').value as QualityName));
+    // Console-style menu: ↑/↓ cycle the main items while the title is up.
+    document.addEventListener('keydown', (event) => {
+      if (this.overlay !== 'title' || (event.code !== 'ArrowDown' && event.code !== 'ArrowUp')) return;
+      const items = [...document.querySelectorAll<HTMLButtonElement>('.game-menu-item')];
+      if (items.length === 0) return;
+      event.preventDefault();
+      const index = items.indexOf(document.activeElement as HTMLButtonElement);
+      const step = event.code === 'ArrowDown' ? 1 : -1;
+      const next = items[(index + step + items.length) % items.length] ?? items[0]!;
+      next.focus();
+      this.actions.uiSound('hover');
+    }, { signal: this.abort.signal });
     on('explore', 'click', () => { this.enterWorld(); actions.lock(); actions.uiSound('confirm'); this.toast('WASD to move · Space to jump · E to interact · C for the survey camera · Esc to pause'); });
     on('pause-resume', 'click', () => this.resume());
     on('pause-settings', 'click', () => this.openSettings());

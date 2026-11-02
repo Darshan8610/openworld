@@ -1,32 +1,29 @@
-# Wayfarer — Infinite Open-World Game
+# Echoes of Blackwood Valley
 
-**Phases 1–13 combined: a seeded, infinite world you can walk, swim, drive, fly, sail, hear, inspect, touch, navigate and share with other people — hardened for release.** Five climate-blended biomes, ten instanced vegetation/rock layers, graded scenic highways, carved lakes and rivers with a shared wave surface, buoyancy, swimming, a seeded weather front with pooled particles, streamed terrain physics, a playable animated character, interactive world objects with persistent state, a scheduled NPC population that paths over streamed terrain and holds conversations, 26 land/air/water vehicles, synthesised spatial audio with ambience zones, a title/pause menu shell with a real mix and accessibility options, and an Ultra graphics preset — over a chunk-streamed landscape with a floating origin and a fixed 120 Hz simulation.
+**A bounded, story-driven psychological thriller built on the Wayfarer engine — shipped as a Windows desktop game (`.exe`) with an optional web preview.**
 
-Built on Three.js r187, TypeScript, Vite, WebGPU + WebGL2 fallback, Web Workers and Rapier 3D.
+You are Jack Mercer, an investigative journalist chasing the communications blackout of an isolated valley town. One square kilometre. Four landmarks on a single highway. Three acts from twilight to dawn. Something in the fog keeps using other people's voices.
 
-> This integration combines the existing Phases 1–12, including Phase 9 water/environment and Phase 12 audio/menus. Phase 11 remains milestone 11.1; combining branches does not make every roadmap feature complete. See [integration notes](docs/INTEGRATION.md) for source branches, verification and remaining seams.
+- **Desktop build (Windows `.exe`)** — `npm ci && npm run build && npm run dist:win` → `release/EchoesOfBlackwoodValley-<version>-win64.exe` (see [docs/DESKTOP.md](docs/DESKTOP.md)).
+- **Web preview** — `npm run preview`, or open the live preview URL. Story mode is on by default; `?story=0` keeps the original infinite sandbox reachable.
+- **Unreal Engine templates are intentionally not used**: the game runs on the existing Three.js/WebGPU + Rapier + TypeScript engine (layer, don't rewrite). Every visual, the city grid, lighting and audio are generated procedurally at runtime — the shipped game contains zero third-party media assets.
 
 ## Quick start
 
 ```bash
 npm install
-npm run dev
+npm run build         # type-check + production build (dist/)
+npm run preview       # web preview
+npm run desktop       # run as a desktop window (requires the Electron runtime)
+npm run dist:win      # package the portable Windows .exe
+npm test              # full suite
 ```
 
-Open the URL printed by Vite (default `http://localhost:5173`). WebGPU requires HTTPS or localhost; the app automatically falls back to WebGL2 when WebGPU is unavailable or fails a probe draw.
+## The campaign
 
-```bash
-npm run build         # type-check + production build
-npm run preview       # serve the production build
-npm test              # unit/integration tests across the full phase suite
-npm run test:browser  # Playwright browser suite (requires Chromium)
-```
+Prologue *The Stranded Arrival* → Act I *Across the Silent Highway* → Act II *Shadows in the Forest* (evasion under a patrolling thing) → Act III *The Lookout* → dawn finale. Mission Director banners, Discovery waypoints, clue/puzzle props, authored dialogue with saved flags, cinematic cutscenes (letterbox + subtitles + ducking), a validated story save slice, and a GTA-style street-grid city graded over the valley floor — with the Radio Lookout keeping its hill for the switchback climb.
 
-For browser tests, install Chromium once:
-
-```bash
-npx playwright install chromium
-```
+## Controls
 
 ## Controls
 

@@ -13,6 +13,45 @@ import { WaterField } from './water-field';
  * Phase 3 grades a deterministic road formation into the natural landform.
  * `naturalHeight` remains the untouched Phase 1/2 field for centreline profiles.
  */
+/**
+ * Optional flat district layered over the landform (story campaigns). The
+ * infinite terrain, biomes and seed determinism stay intact — `height()`
+ * simply blends toward a plateau inside the rect, preserving a keep-out
+ * hill (e.g. the radio lookout) and fading over `skirt` metres outside.
+ * Set once per mode via `setTerrainPlateau`; workers receive it per request.
+ */
+export interface TerrainPlateau {
+  readonly minX: number; readonly maxX: number;
+  readonly minZ: number; readonly maxZ: number;
+  readonly height: number;
+  readonly skirt: number;
+  readonly keepOut?: { readonly x: number; readonly z: number; readonly radius: number; readonly skirt: number };
+}
+
+let plateauZone: TerrainPlateau | null = null;
+
+/** Activate (or clear with null) the flat district for every height sample. */
+export function setTerrainPlateau(zone: TerrainPlateau | null): void {
+  plateauZone = zone;
+}
+
+/** Current plateau (tests and diagnostics). */
+export function currentTerrainPlateau(): TerrainPlateau | null { return plateauZone; }
+
+function plateauBlend(zone: TerrainPlateau, x: number, z: number): number {
+  const dx = Math.max(zone.minX - x, 0, x - zone.maxX);
+  const dz = Math.max(zone.minZ - z, 0, z - zone.maxZ);
+  const outside = Math.hypot(dx, dz);
+  let weight = 1 - smoothstep(0, zone.skirt, outside);
+  if (weight > 0 && zone.keepOut) {
+    const keep = zone.keepOut;
+    const distance = Math.hypot(x - keep.x, z - keep.z);
+    const hill = 1 - smoothstep(keep.radius, keep.radius + keep.skirt, distance);
+    weight *= 1 - hill;
+  }
+  return weight;
+}
+
 export class TerrainField {
   private readonly warp: SimplexNoise;
   private readonly relief: SimplexNoise;
@@ -44,6 +83,10 @@ export class TerrainField {
   }
 
   naturalHeight(x: number, z: number): number {
+    return this.naturalHeightBase(x, z);
+  }
+
+  private naturalHeightBase(x: number, z: number): number {
     const wx = x + this.warp.fbm(x * 0.00016 + 31, z * 0.00016, 3) * 380;
     const wz = z + this.warp.fbm(x * 0.00016, z * 0.00016 - 17, 3) * 380;
     const continent = this.relief.fbm(wx * 0.000095, wz * 0.000095, 4);
@@ -56,7 +99,10 @@ export class TerrainField {
     const rolling = this.detail.fbm(wx * 0.00085, wz * 0.00085, 3) * 60;
     const gullies = (1 - Math.abs(this.detail.noise(wx * 0.006, wz * 0.006))) * 7;
     const fine = this.detail.fbm(x * 0.014, z * 0.014, 2) * 2.8;
-    return 48 + continent * 95 + mountains + (rolling + gullies + fine) * lerp(0.35, 1, valley);
+    const base = 48 + continent * 95 + mountains + (rolling + gullies + fine) * lerp(0.35, 1, valley);
+    if (!plateauZone) return base;
+    const weight = plateauBlend(plateauZone, x, z);
+    return weight > 0 ? lerp(base, plateauZone.height, weight) : base;
   }
 
   /**

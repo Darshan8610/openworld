@@ -1,4 +1,4 @@
-import { TerrainField } from '../world/terrain-field';
+import { TerrainField, setTerrainPlateau } from '../world/terrain-field';
 import { generateTile } from '../world/terrain-generator';
 import type { TileRequest } from '../world/tiles';
 
@@ -13,6 +13,7 @@ const worker = self as unknown as {
 worker.onmessage = ({ data }: MessageEvent<TileRequest>) => {
   const request = data;
   try {
+    setTerrainPlateau(request.plateau ?? null);
     if (!field || fieldSeed !== request.seed) {
       field = new TerrainField(request.seed);
       fieldSeed = request.seed;

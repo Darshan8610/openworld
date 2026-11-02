@@ -6,7 +6,7 @@ import type { InteractionProvider } from '../interaction/types';
 import type { WeatherKind } from '../environment/weather';
 import type { ConversationView } from '../npc/types';
 import type { Object3D } from 'three/webgpu';
-import { CAMPAIGN, landmark, type ActId } from './campaign';
+import { CAMPAIGN, STORY_PLATEAU, landmark, type ActId } from './campaign';
 import type { BannerKind, MissionDirector } from './mission-director';
 import type { NarrativeState } from './narrative-state';
 import { CampaignBounds } from './bounds';
@@ -20,6 +20,7 @@ import { buildFinaleShot, buildOpeningShot, buildRelayShot, buildRevelationShot 
 import { ShadowPatrol, type PatrolPlayer } from './shadow-patrol';
 import { StoryAtmosphere } from './atmosphere';
 import { StoryFlashlight } from './flashlight';
+import { StoryCity } from './city';
 
 /** What the story layer needs from the interface — structural, no UI imports. */
 export interface StoryUi {
@@ -72,11 +73,16 @@ export class StoryGame {
   readonly director: MissionDirector;
   readonly dialogue = new StoryDialogueRunner();
   private readonly props: StoryProps;
-  /** Act II shadow patrol + highway night dressing (hazard wrecks, signs). */
+  /** Act II shadow patrol (position updates live from ground samples). */
   readonly patrol: ShadowPatrol;
-  readonly atmosphere: StoryAtmosphere;
   /** Jack's flashlight (Y) — spec'd third primary light after headlights. */
   readonly flashlight: StoryFlashlight;
+  /**
+   * Night dressing + the city grid sample the ground when built, so they are
+   * created on the first world-ready (tiles exist at plateau height by then).
+   */
+  private atmosphere?: StoryAtmosphere;
+  private city?: StoryCity;
   private readonly unsubscribers: (() => void)[] = [];
   private openingDone = false;
   private creditsShown = false;
@@ -118,11 +124,6 @@ export class StoryGame {
       onSpotted: (times) => this.onSpotted(times),
     });
     deps.scene.add(this.patrol.group);
-    this.atmosphere = new StoryAtmosphere({
-      ground: deps.ground, roadZ: deps.roadZ, bounds: CAMPAIGN.bounds,
-      diner: landmark('diner'), motel: landmark('motel'),
-    });
-    deps.scene.add(this.atmosphere.group);
     this.flashlight = new StoryFlashlight(
       { add: (object) => deps.scene.add(object), remove: (object) => deps.scene.remove(object) },
       deps.ground,
@@ -131,12 +132,34 @@ export class StoryGame {
     this.syncPatrol();
   }
 
+  /** Build ground-sampled dressing once real terrain tiles exist. */
+  private ensureWorldDressing(): void {
+    if (!this.atmosphere) {
+      this.atmosphere = new StoryAtmosphere({
+        ground: this.deps.ground, roadZ: this.deps.roadZ, bounds: CAMPAIGN.bounds,
+        diner: landmark('diner'), motel: landmark('motel'),
+      });
+      this.deps.scene.add(this.atmosphere.group);
+    }
+    if (!this.city) {
+      this.city = new StoryCity({
+        bounds: CAMPAIGN.bounds,
+        ground: this.deps.ground,
+        landmarks: CAMPAIGN.landmarks,
+        arrival: CAMPAIGN.arrival,
+        plateau: { height: STORY_PLATEAU.height },
+      });
+      this.deps.scene.add(this.city.group);
+    }
+  }
+
   // ---- lifecycle ------------------------------------------------------------
 
   /** First time the world reports ready: open with the stranded arrival. */
   onWorldReady(): void {
     if (this.openingDone) return;
     this.openingDone = true;
+    this.ensureWorldDressing();
     if (this.director.started || this.narrative.hasCutscene('opening')) {
       // Restored progress: no opening replay; resume the chain.
       if (!this.director.started) this.director.begin();
@@ -153,7 +176,7 @@ export class StoryGame {
   /** Advance cinematics, night dressing and the patrol once per frame. */
   update(dt: number): void {
     this.cinematic.update(dt);
-    this.atmosphere.update(dt);
+    this.atmosphere?.update(dt);
     // The hunt only runs when the player is in control (never during shots).
     if (!this.cinematic.active) {
       const player = this.deps.player();
@@ -246,8 +269,9 @@ export class StoryGame {
     this.props.dispose();
     this.bounds.dispose();
     this.patrol.dispose();
-    this.atmosphere.dispose();
+    this.atmosphere?.dispose();
     this.flashlight.dispose();
+    this.city?.dispose();
     while (this.unsubscribers.length > 0) this.unsubscribers.pop()?.();
   }
 

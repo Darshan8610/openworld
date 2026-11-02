@@ -1,3 +1,4 @@
+import type { TerrainPlateau } from '../world/terrain-field';
 import type { WeatherKind } from '../environment/weather';
 
 /**
@@ -87,6 +88,20 @@ export const CAMPAIGN = {
     { id: 'finale', label: 'Dawn', weather: 'clear', hour: 5.6 },
   ] as readonly ActDef[],
 } as const;
+
+/**
+ * The GTA-style flat district: the whole valley floor grades to 46 m so the
+ * city reads as one continuous street level, while the Radio Lookout keeps
+ * its 93 m hill (Act III's switchback climb). Applied through the shared
+ * height funnel — the infinite world keeps streaming underneath.
+ */
+export const STORY_PLATEAU: TerrainPlateau = {
+  minX: CAMPAIGN.bounds.minX, maxX: CAMPAIGN.bounds.maxX,
+  minZ: CAMPAIGN.bounds.minZ, maxZ: CAMPAIGN.bounds.maxZ,
+  height: 46,
+  skirt: 70,
+  keepOut: { x: 176.32473270423412, z: -504.74385325050787, radius: 150, skirt: 90 },
+};
 
 /** Convenience list for world wiring (building registration, props). */
 export const LANDMARKS = CAMPAIGN.landmarks;

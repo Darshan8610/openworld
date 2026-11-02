@@ -14,6 +14,8 @@ export interface TileRequest extends TileCoord {
   epoch: number;
   seed: string;
   segments: number;
+  /** Story flat-district blend applied by the worker's TerrainField. */
+  plateau?: import('./terrain-field').TerrainPlateau | null;
 }
 export interface TileResult {
   type: 'tile';

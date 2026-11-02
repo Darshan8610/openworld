@@ -84,7 +84,8 @@ import { BuildingManager } from '../world/buildings/manager';
 import { BuildingExperience } from '../world/buildings/experience';
 import { TerrainField } from '../world/terrain-field';
 import type { BuildingStorage } from '../world/buildings/state';
-import { CAMPAIGN, LANDMARKS } from '../story/campaign';
+import { CAMPAIGN, LANDMARKS, STORY_PLATEAU } from '../story/campaign';
+import { setTerrainPlateau } from '../world/terrain-field';
 import type { PlacedVehicle } from '../vehicles/placement';
 import { StoryGame } from '../story/story';
 
@@ -216,6 +217,9 @@ export class Game {
   private constructor(context: RenderingContext, seed: string, quality: QualityName, hour: number, position: Vector3) {
     // Story mode flag (URL story=0 keeps the infinite sandbox reachable).
     this.storyEnabled = new URLSearchParams(location.search).get('story') !== '0';
+    // GTA-style flat city district: flatten the campaign zone (lookout hill
+    // preserved) in the shared height funnel before anything samples it.
+    if (this.storyEnabled) setTerrainPlateau(STORY_PLATEAU);
     this.context = context; this.seed = seed; this.quality = quality; this.qualityCeiling = quality;
     this.scene.name = 'Wayfarer / integrated Phases 1–12';
     this.scene.fog = new Fog(0xb6c8cf, QUALITY[quality].viewDistance * 0.36, QUALITY[quality].viewDistance);
@@ -230,6 +234,7 @@ export class Game {
     }
     applyPreferences(this.preferences, document.documentElement);
     this.terrain = new TerrainManager(this.origin, seed, quality, (error) => this.fail(error));
+    if (this.storyEnabled) this.terrain.setPlateau(STORY_PLATEAU);
     this.vegetation = new VegetationManager(this.terrain, this.origin, quality);
     this.roads = new RoadManager(this.terrain, this.origin, quality, seed);
     if (new URLSearchParams(location.search).get('roads') === '0') this.roads.setEnabled(false);
@@ -241,6 +246,9 @@ export class Game {
     if (new URLSearchParams(location.search).get('water') === '0') this.water.setEnabled(false);
     this.rig = new SurveyCamera(this.input, this.origin, this.terrain, this.roads);
     this.rig.position.copy(position); this.rig.previous.copy(position); this.rig.home.copy(position);
+    // Story mode: a still title backdrop — the scenic orbit ("rolling head")
+    // is a sandbox affordance and would fight the main menu.
+    if (this.storyEnabled) this.rig.touring = false;
     this.origin.update(position);
     // The playable character is the primary view; the survey rig stays parked on
     // the scenic route so switching (C) never loses the route context.
@@ -586,6 +594,8 @@ export class Game {
    * the world is ready would leave a black screen behind a live HUD.
    */
   private get activeCamera(): PerspectiveCamera {
+    // A running cutscene owns the frame (letterbox + subtitles ride on it).
+    if (this.story?.cinematic.active) return this.story.cinematic.camera;
     return this.mode === 'character' && this.character.ready ? this.character.camera : this.rig.camera;
   }
 

@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  // Relative asset URLs: required for the packaged desktop build (app:// scheme)
+  // and harmless for the web preview.
+  base: './',
   server: {
     host: '0.0.0.0',
     port: 5173,

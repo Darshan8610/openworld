@@ -1,16 +1,18 @@
 {
-  "name": "wayfarer-infinite-world",
+  "name": "echoes-of-blackwood-valley",
   "version": "0.6.0",
   "private": true,
   "type": "module",
-  "description": "Wayfarer — a seeded infinite open world with a playable character, streamed terrain physics, interactive world objects, biomes, scenic roads and an Ultra graphics preset.",
+  "description": "Echoes of Blackwood Valley — a bounded, story-driven psychological thriller (desktop build). Ships as a Windows .exe via electron-builder; the web preview remains available.",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "desktop": "electron .",
+    "dist:win": "electron-builder --win portable --x64"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
@@ -24,11 +26,39 @@
     "@types/three": "0.187.0",
     "@types/web": "0.0.359",
     "@webgpu/types": "^0.1.74",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
     "typescript": "7.0.2",
     "vite": "8.3.5",
     "vitest": "5.0.5"
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "main": "desktop/main.cjs",
+  "build": {
+    "appId": "valley.blackwood.echoes",
+    "productName": "EchoesOfBlackwoodValley",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "EchoesOfBlackwoodValley-${version}-win64.exe"
+    }
   }
 }
