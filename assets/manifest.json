@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "project": "Wayfarer",
+  "version": "1.0.0",
+  "updated_at": "2026-11-02T15:05:00Z",
+  "assets": [
+    {
+      "asset_id": "VEH_CAR_SEDAN_001",
+      "name": "Aurelia Family Sedan",
+      "category": "vehicle",
+      "subcategory": "sedan",
+      "format": "threejs_mesh_pbr",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "model_path": "src/rendering/vehicles/sedan.ts",
+      "pbr_materials": ["car_paint_red", "car_paint_blue", "car_paint_black", "chrome_trim", "rubber_tire", "clear_glass"],
+      "collision": "box_chassis_convex_compound",
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "VEH_CAR_SUV_001",
+      "name": "Sierra 4x4 Overland SUV",
+      "category": "vehicle",
+      "subcategory": "suv",
+      "format": "threejs_mesh_pbr",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "model_path": "src/rendering/vehicles/suv.ts",
+      "pbr_materials": ["car_paint_forest_green", "matte_black_bumper", "rubber_tire", "tinted_glass"],
+      "collision": "box_chassis_convex_compound",
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "VEH_CAR_PICKUP_001",
+      "name": "Bighorn Utility Pickup Truck",
+      "category": "vehicle",
+      "subcategory": "pickup",
+      "format": "threejs_mesh_pbr",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "model_path": "src/rendering/vehicles/pickup.ts",
+      "pbr_materials": ["car_paint_white", "steel_bed", "rubber_tire", "clear_glass"],
+      "collision": "box_chassis_convex_compound",
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "VEH_CAR_SPORTS_001",
+      "name": "Vanguard GT Coupe",
+      "category": "vehicle",
+      "subcategory": "sports",
+      "format": "threejs_mesh_pbr",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "model_path": "src/rendering/vehicles/sports.ts",
+      "pbr_materials": ["car_paint_crimson", "gloss_black_spoiler", "alloy_rims", "tinted_glass"],
+      "collision": "box_chassis_convex_compound",
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "VEH_CAR_SUPER_001",
+      "name": "Infernus Exotic Supercar",
+      "category": "vehicle",
+      "subcategory": "supercar",
+      "format": "threejs_mesh_pbr",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "model_path": "src/rendering/vehicles/supercar.ts",
+      "pbr_materials": ["car_paint_canary_yellow", "carbon_fiber_splitter", "gold_caliper", "tinted_glass"],
+      "collision": "box_chassis_convex_compound",
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "VEH_CAR_MUSCLE_001",
+      "name": "Sabre V8 Muscle Car",
+      "category": "vehicle",
+      "subcategory": "muscle",
+      "format": "threejs_mesh_pbr",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "model_path": "src/rendering/vehicles/muscle.ts",
+      "pbr_materials": ["car_paint_matte_gray", "hood_scoop_black", "chrome_mag_wheels"],
+      "collision": "box_chassis_convex_compound",
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "VEH_MOTO_CRUISER_001",
+      "name": "Highway Twin Motorcycle",
+      "category": "vehicle",
+      "subcategory": "motorcycle",
+      "format": "threejs_mesh_pbr",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "model_path": "src/rendering/vehicles/motorcycle.ts",
+      "pbr_materials": ["chrome_exhaust", "black_leather_seat", "gas_tank_teal"],
+      "collision": "capsule_compound",
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "VEH_SERVICE_POLICE_001",
+      "name": "Interceptor Police Cruiser",
+      "category": "vehicle",
+      "subcategory": "service",
+      "format": "threejs_mesh_pbr",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "model_path": "src/rendering/vehicles/police.ts",
+      "pbr_materials": ["black_white_police_livery", "roof_lightbar_red_blue", "push_bumper_steel"],
+      "collision": "box_chassis_convex_compound",
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "CHAR_PLAYER_PROTAGONIST_001",
+      "name": "Jack Wayfarer — Protagonist",
+      "category": "character",
+      "subcategory": "player",
+      "format": "threejs_skinned_rig",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "model_path": "src/character/humanoid-model.ts",
+      "animations": ["idle", "walk", "jog", "sprint", "crouch", "jump", "land", "swim", "drive"],
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "CHAR_NPC_POPULATION_SYSTEM",
+      "name": "Modular Unique-Face NPC System",
+      "category": "character",
+      "subcategory": "npc",
+      "format": "threejs_procedural_texture_and_mesh",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "features": {
+        "skin_tones": 16,
+        "hair_styles": 9,
+        "facial_hair_styles": 8,
+        "eyewear_accessories": 8,
+        "unique_combinations": 3500000
+      },
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "BLDG_KIT_MODULAR_URBAN_001",
+      "name": "Modular City Architectural Kit",
+      "category": "building",
+      "subcategory": "urban",
+      "format": "threejs_instanced_geometry",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "families": [
+        "craftsman_house", "commercial_storefront", "retro_diner", "motor_hotel",
+        "gas_station", "industrial_warehouse", "office_tower", "suburban_bungalow"
+      ],
+      "approval_status": "approved"
+    },
+    {
+      "asset_id": "VEG_FOLIAGE_SUITE_001",
+      "name": "Wayfarer Regional Vegetation Suite",
+      "category": "vegetation",
+      "subcategory": "trees_and_shrubs",
+      "format": "threejs_instanced_lod",
+      "source": "original",
+      "license": "project-owned",
+      "version": 1,
+      "species": [
+        "douglas_fir", "ponderosa_pine", "california_fan_palm", "deciduous_oak",
+        "coastal_bush", "mountain_shrub", "wild_grass_clump", "granite_boulder"
+      ],
+      "approval_status": "approved"
+    }
+  ]
+}

@@ -452,6 +452,9 @@ export class Interface {
   resume(): void { this.applyOverlay(this.menu.resume().to); }
 
   openSettings(): void {
+    if (typeof document !== 'undefined' && document.pointerLockElement) {
+      try { document.exitPointerLock(); } catch { /* ignore */ }
+    }
     this.settingsReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.applyOverlay(this.menu.openSettings().to);
   }
@@ -491,7 +494,6 @@ export class Interface {
     // shell must stay interactive and exposed while it is shown.
     const modal = overlay === 'pause';
     const shell = $('#interface') as HTMLElement & { inert?: boolean };
-    shell.inert = modal;
     shell.setAttribute('aria-hidden', String(modal));
     document.body.classList.toggle('paused', overlay === 'pause');
     document.body.classList.toggle('title-screen', overlay === 'title');

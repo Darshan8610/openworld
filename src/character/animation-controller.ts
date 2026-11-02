@@ -1,4 +1,4 @@
-import { AnimationAction, AnimationClip, AnimationMixer, LoopOnce, LoopRepeat, Object3D, Vector3 } from 'three/webgpu';
+import { AnimationAction, AnimationClip, AnimationMixer, Euler, LoopOnce, LoopRepeat, Object3D, Quaternion, Vector3 } from 'three/webgpu';
 import type { Bone } from 'three/webgpu';
 import type { RigBoneMap, RigSemantic } from './rig';
 
@@ -33,6 +33,9 @@ export class AnimationController {
   private currentRate = 1;
   private readonly hipsWorld = new Vector3();
   private readonly hipsLocal = new Vector3();
+  private readonly baseQuaternions = new Map<RigSemantic, Quaternion>();
+  private readonly offsetEuler = new Euler(0, 0, 0, 'YXZ');
+  private readonly offsetQuat = new Quaternion();
   private readonly previousHips = new Vector3();
   private readonly rootMotion = new Vector3();
   private hasPreviousHips = false;
@@ -108,6 +111,11 @@ export class AnimationController {
 
   update(dt: number): void {
     this.mixer.update(dt);
+    for (const [semantic, bone] of this.bones) {
+      const stored = this.baseQuaternions.get(semantic);
+      if (stored) stored.copy(bone.quaternion);
+      else this.baseQuaternions.set(semantic, bone.quaternion.clone());
+    }
     if (!this.rootMotionEnabled) return;
     const hips = this.bones.get('hips');
     if (!hips) return;
@@ -134,20 +142,11 @@ export class AnimationController {
   offsetJoint(semantic: RigSemantic, x: number, y: number, z: number): Bone | undefined {
     const bone = this.bones.get(semantic);
     if (!bone) return undefined;
-    // Applied after mixer.update(): rotate the mixer's absolute pose a little further.
-    const q = bone.quaternion;
-    const sx = Math.sin(x / 2), cx = Math.cos(x / 2);
-    const sy = Math.sin(y / 2), cy = Math.cos(y / 2);
-    const sz = Math.sin(z / 2), cz = Math.cos(z / 2);
-    const qx = cx * sy * sz + sx * cy * cz;
-    const qy = cx * sy * cz - sx * cy * sz;
-    const qz = cx * cy * sz - sx * sy * cz;
-    const qw = cx * cy * cz + sx * sy * sz;
-    const nx = q.x * qw + q.w * qx + q.y * qz - q.z * qy;
-    const ny = q.y * qw + q.w * qy + q.z * qx - q.x * qz;
-    const nz = q.z * qw + q.w * qz + q.x * qy - q.y * qx;
-    const nw = q.w * qw - q.x * qx - q.y * qy - q.z * qz;
-    bone.quaternion.set(nx, ny, nz, nw);
+    const base = this.baseQuaternions.get(semantic);
+    if (base) bone.quaternion.copy(base);
+    this.offsetEuler.set(x, y, z, 'YXZ');
+    this.offsetQuat.setFromEuler(this.offsetEuler);
+    bone.quaternion.multiply(this.offsetQuat);
     return bone;
   }
 
@@ -158,6 +157,7 @@ export class AnimationController {
     this.mixer.uncacheRoot(this.root);
     this.actions.clear();
     this.definitions.clear();
+    this.baseQuaternions.clear();
     this.current = null;
   }
 }

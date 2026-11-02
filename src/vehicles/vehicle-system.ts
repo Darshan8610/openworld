@@ -9,6 +9,7 @@ import type { PersistedVehicles } from '../persistence/vehicle-store';
 import { Vehicle } from './vehicle';
 import { vehicleSpec } from './catalog';
 import { VehicleAudioHooks } from './vehicle-audio';
+import { VehicleVisual } from '../rendering/vehicles/vehicle-visual';
 import { WorldVehicleEnvironment } from './vehicle-environment';
 import { planVehicleCell, vehicleCellKey, vehicleCellsAround } from './placement';
 import type { PlacedVehicle } from './placement';
@@ -58,6 +59,7 @@ export class VehicleSystem {
 
   private readonly active = new Map<string, Vehicle>();
   private readonly anchors = new Map<string, Group>();
+  private readonly visuals = new Map<string, VehicleVisual>();
   private readonly audio = new Map<string, VehicleAudioHooks>();
   private readonly planned = new Map<string, PlacedVehicle[]>();
   /** Authored (story) placements kept alive across streaming. */
@@ -172,6 +174,7 @@ export class VehicleSystem {
         this.renderPoint.z = this.poseScratch.z;
         toRenderPoint(this.renderPoint, origin, anchor.position);
       }
+      this.visuals.get(id)?.update(dt);
       this.audio.get(id)?.update(vehicle);
     }
   }
@@ -365,10 +368,13 @@ export class VehicleSystem {
 
     const anchor = new Group();
     anchor.name = `vehicle/${entry.id}`;
+    const visual = new VehicleVisual(vehicle);
+    anchor.add(visual.root);
     this.root.add(anchor);
 
     this.active.set(entry.id, vehicle);
     this.anchors.set(entry.id, anchor);
+    this.visuals.set(entry.id, visual);
     this.audio.set(entry.id, new VehicleAudioHooks());
     this.options.interaction.register(vehicle);
     this.options.events.emit('vehicle:spawned', {
@@ -390,6 +396,11 @@ export class VehicleSystem {
       this.persisted[id] = { key: vehicle.spec.key, state: vehicle.serialize() };
     }
     this.options.interaction.unregister(id);
+    const visual = this.visuals.get(id);
+    if (visual) {
+      visual.dispose();
+      this.visuals.delete(id);
+    }
     const anchor = this.anchors.get(id);
     if (anchor) {
       this.root.remove(anchor);
@@ -404,6 +415,8 @@ export class VehicleSystem {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const visual of this.visuals.values()) visual.dispose();
+    this.visuals.clear();
     for (const id of [...this.active.keys()]) this.despawn(id);
     this.planned.clear();
     this.root.clear();

@@ -70,6 +70,8 @@ function buildClip(name: PlaceholderClipName, keys: readonly Keyframe[], bones: 
   const tracks: KeyframeTrack[] = [];
   const used = new Set<RigSemantic>();
   for (const key of keys) for (const semantic of Object.keys(key.pose) as RigSemantic[]) used.add(semantic);
+  used.add('head');
+  used.add('neck');
   const euler = new Euler(0, 0, 0, 'XYZ');
   const quaternion = new Quaternion();
   for (const semantic of used) {

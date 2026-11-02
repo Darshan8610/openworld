@@ -9,6 +9,7 @@ import type { VisualState } from '../character/character-visual';
 import { createPlaceholderCharacter } from '../character/character-assets';
 import type { WorldPoint } from '../core/coordinates';
 import type { NpcDefinition } from './types';
+import { buildUniqueHeadAccessories } from './npc-face';
 
 /**
  * NPC rendering, in two honest fidelity tiers:
@@ -46,6 +47,7 @@ export interface NpcVisual {
   readonly role: string;
   /** Role accent used for pooling. */
   readonly accent: number;
+  configureNpc?(id: string): void;
   update(dt: number, pose: NpcPose): void;
   dispose(): void;
 }
@@ -80,6 +82,13 @@ export class RiggedNpcVisual implements NpcVisual {
       lookYaw: 0, cameraPitch: 0, firstPerson: false,
     };
     this.root = this.visual.root;
+  }
+
+  configureNpc(id: string): void {
+    const headBone = this.asset.rig.bones.get('head');
+    if (headBone) {
+      buildUniqueHeadAccessories(headBone, id);
+    }
   }
 
   update(dt: number, pose: NpcPose): void {
@@ -162,6 +171,10 @@ export class ProxyNpcVisual implements NpcVisual {
     this.root.scale.setScalar(definition.heightScale);
   }
 
+  configureNpc(id: string): void {
+    buildUniqueHeadAccessories(this.head, id);
+  }
+
   update(dt: number, pose: NpcPose): void {
     this.root.position.set(
       pose.world.x - pose.origin.x,
@@ -194,8 +207,11 @@ export class NpcVisualPool {
   private readonly proxies = new Map<number, ProxyNpcVisual[]>();
   private readonly live = new Set<NpcVisual>();
 
-  acquire(definition: NpcDefinition, rigged: boolean): NpcVisual {
+  acquire(definition: NpcDefinition, rigged: boolean, id?: string): NpcVisual {
     const visual = rigged ? (this.rigs.get(definition.role)?.pop() ?? new RiggedNpcVisual(definition)) : (this.proxies.get(definition.accent)?.pop() ?? new ProxyNpcVisual(definition));
+    if (id && visual.configureNpc) {
+      visual.configureNpc(id);
+    }
     this.live.add(visual);
     return visual;
   }

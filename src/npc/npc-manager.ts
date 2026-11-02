@@ -428,7 +428,7 @@ export class NpcManager {
     }
     if (current && current.rigged === wantsRig) return;
     if (current) { this.visuals.release(current); npc.visual = undefined; }
-    const visual = this.visuals.acquire(npc.definition, wantsRig);
+    const visual = this.visuals.acquire(npc.definition, wantsRig, npc.id);
     npc.visual = visual;
     this.group.add(visual.root);
   }

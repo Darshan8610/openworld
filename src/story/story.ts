@@ -223,6 +223,19 @@ export class StoryGame {
   /** Clamp hook target (the game applies the actual clamp each fixed step). */
   get boundsActive(): boolean { return !this.cinematic.active; }
 
+  /**
+   * Collision check combining campaign boundaries and high-detail city buildings/props.
+   * Prevents walking or driving through city architecture like a ghost.
+   */
+  blockedAt(x: number, z: number, feetY = Number.NEGATIVE_INFINITY): boolean {
+    return this.bounds.blockedAt(x, z, feetY) || (this.city?.blockedAt(x, z, feetY) ?? false);
+  }
+
+  /** City scene group holding 3D architectural geometry. */
+  get cityGroup(): Object3D | undefined {
+    return this.city?.group;
+  }
+
   saveState(): NarrativeState { return this.narrative.snapshot(); }
 
   restoreState(value: unknown): boolean {

@@ -265,7 +265,7 @@ export class Game {
       quality,
       reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
       colliders: this.cameraSolids,
-      blocked: (x, z, feetY) => this.buildings.blockedAt(x, z, feetY) || (this.story?.bounds.blockedAt(x, z) ?? false),
+      blocked: (x, z, feetY) => this.buildings.blockedAt(x, z, feetY) || (this.story?.blockedAt(x, z, feetY) ?? false),
       supportHeight: (x, z, baseY) => this.buildings.supportAt(x, z, baseY),
     });
     // Swimming reads the same water surface the renderer draws, waves included.
@@ -698,6 +698,9 @@ export class Game {
                 this.spawnStoryActors();
               }
               this.story?.onWorldReady();
+              if (this.story?.cityGroup && !this.cameraSolids.includes(this.story.cityGroup)) {
+                this.cameraSolids.push(this.story.cityGroup);
+              }
               this.loop.reset();
               if (this.context.fallbackReason) this.ui.toast(`Using WebGL2 compatibility mode · ${this.context.backend}`);
             }).catch((error: unknown) => this.fail(error instanceof Error ? error : new Error(String(error))));
@@ -1012,7 +1015,7 @@ export class Game {
       { id: 'story:town-04', role: 'wanderer',   x: LANDMARKS[0]!.x + 30,     z: LANDMARKS[0]!.z - 16,    yaw: 3.6 },
       { id: 'story:town-05', role: 'traveller',  x: LANDMARKS[1]!.x + 20,     z: LANDMARKS[1]!.z + 12,    yaw: 4.1 },
       { id: 'story:town-06', role: 'wanderer',   x: LANDMARKS[1]!.x - 16,     z: LANDMARKS[1]!.z - 14,    yaw: 5.2 },
-      { id: 'story:town-07', role: 'worker',     x: LANDMARKS[1]!.x + 8,      z: LANDMARKS[1]!.z + 26,     yaw: 0.9 },
+      { id: 'story:town-07', role: 'worker',     x: LANDMARKS[1]!.x + 8,      z: LANDMARKS[1]!.z + 26,    yaw: 0.9 },
       { id: 'story:town-08', role: 'wanderer',   x: LANDMARKS[2]!.x + 22,     z: LANDMARKS[2]!.z - 10,    yaw: 2.0 },
       { id: 'story:town-09', role: 'watcher',    x: LANDMARKS[2]!.x - 14,     z: LANDMARKS[2]!.z + 18,    yaw: 4.8 },
       { id: 'story:town-10', role: 'worker',     x: LANDMARKS[2]!.x + 6,      z: LANDMARKS[2]!.z + 30,    yaw: 1.6 },
@@ -1022,6 +1025,38 @@ export class Game {
       { id: 'story:town-14', role: 'watcher',    x: -312,                     z: -95,                     yaw: 2.7 },
       { id: 'story:town-15', role: 'wanderer',   x: 156,                      z: -474,                    yaw: 4.4 },
       { id: 'story:town-16', role: 'worker',     x: -496,                     z: -171,                    yaw: 1.1 },
+      { id: 'story:town-17', role: 'worker',     x: -390,                     z: -80,                     yaw: 0.5 },
+      { id: 'story:town-18', role: 'wanderer',   x: -430,                     z: -55,                     yaw: 1.8 },
+      { id: 'story:town-19', role: 'watcher',    x: -375,                     z: -110,                    yaw: 2.9 },
+      { id: 'story:town-20', role: 'traveller',  x: -445,                     z: -90,                     yaw: 4.2 },
+      { id: 'story:town-21', role: 'wanderer',   x: -360,                     z: -70,                     yaw: 5.1 },
+      { id: 'story:town-22', role: 'worker',     x: -405,                     z: -125,                    yaw: 0.8 },
+      { id: 'story:town-23', role: 'watcher',    x: -345,                     z: -140,                    yaw: 3.4 },
+      { id: 'story:town-24', role: 'wanderer',   x: -460,                     z: -40,                     yaw: 1.5 },
+      { id: 'story:town-25', role: 'traveller',  x: -330,                     z: -95,                     yaw: 2.1 },
+      { id: 'story:town-26', role: 'worker',     x: -475,                     z: -115,                    yaw: 4.7 },
+      { id: 'story:town-27', role: 'wanderer',   x: -385,                     z: -160,                    yaw: 3.0 },
+      { id: 'story:town-28', role: 'watcher',    x: -420,                     z: -145,                    yaw: 0.3 },
+      { id: 'story:town-29', role: 'traveller',  x: -315,                     z: -65,                     yaw: 5.9 },
+      { id: 'story:town-30', role: 'worker',     x: -450,                     z: -180,                    yaw: 1.4 },
+      { id: 'story:town-31', role: 'wanderer',   x: -370,                     z: -45,                     yaw: 2.6 },
+      { id: 'story:town-32', role: 'watcher',    x: -480,                     z: -75,                     yaw: 3.8 },
+      { id: 'story:town-33', role: 'wanderer',   x: -350,                     z: -185,                    yaw: 0.9 },
+      { id: 'story:town-34', role: 'worker',     x: -410,                     z: -210,                    yaw: 2.2 },
+      { id: 'story:town-35', role: 'traveller',  x: -465,                     z: -150,                    yaw: 4.0 },
+      { id: 'story:town-36', role: 'watcher',    x: -335,                     z: -220,                    yaw: 5.3 },
+      { id: 'story:town-37', role: 'wanderer',   x: -440,                     z: -235,                    yaw: 1.7 },
+      { id: 'story:town-38', role: 'worker',     x: -320,                     z: -175,                    yaw: 3.2 },
+      { id: 'story:town-39', role: 'watcher',    x: -490,                     z: -130,                    yaw: 0.6 },
+      { id: 'story:town-40', role: 'traveller',  x: -365,                     z: -245,                    yaw: 2.8 },
+      { id: 'story:town-41', role: 'wanderer',   x: -425,                     z: -260,                    yaw: 4.5 },
+      { id: 'story:town-42', role: 'worker',     x: -305,                     z: -130,                    yaw: 5.6 },
+      { id: 'story:town-43', role: 'watcher',    x: -510,                     z: -100,                    yaw: 1.1 },
+      { id: 'story:town-44', role: 'traveller',  x: -380,                     z: -275,                    yaw: 3.5 },
+      { id: 'story:town-45', role: 'wanderer',   x: -455,                     z: -285,                    yaw: 0.1 },
+      { id: 'story:town-46', role: 'worker',     x: -290,                     z: -160,                    yaw: 2.4 },
+      { id: 'story:town-47', role: 'watcher',    x: -525,                     z: -145,                    yaw: 4.9 },
+      { id: 'story:town-48', role: 'wanderer',   x: -395,                     z: -295,                    yaw: 1.9 },
     ];
     for (const person of townfolk) {
       const home = { x: person.x, y: ground(person.x, person.z), z: person.z };
@@ -1069,8 +1104,15 @@ export class Game {
       const body = this.driving.body;
       const x = body.position.x; const z = body.position.z;
       bounds.clamp(body.position);
-      if (body.position.x !== x) body.velocity.x = 0;
-      if (body.position.z !== z) body.velocity.z = 0;
+      if (this.story?.blockedAt(body.position.x, body.position.z)) {
+        body.position.x = x;
+        body.position.z = z;
+        body.velocity.x *= -0.3;
+        body.velocity.z *= -0.3;
+      } else {
+        if (body.position.x !== x) body.velocity.x = 0;
+        if (body.position.z !== z) body.velocity.z = 0;
+      }
     } else if (this.character.ready && this.mode === 'character') {
       const position = this.character.controller.position;
       const x = position.x; const z = position.z;
@@ -1152,7 +1194,7 @@ export class Game {
       interaction: this.interaction,
       quality: this.quality,
       terrain: this.terrain,
-      blockers: { blocked: (x, z) => this.objects.blocksWalk(x, z) || (this.buildings?.field.reserved(x, z, 1) ?? false) },
+      blockers: { blocked: (x, z) => this.objects.blocksWalk(x, z) || (this.buildings?.field.reserved(x, z, 1) ?? false) || (this.story?.blockedAt(x, z) ?? false) },
       time: () => this.sky?.hour ?? CONFIG.sky.initialHour,
       notify: (message) => { this.ui?.toast(message); },
       savedState: npcState,
